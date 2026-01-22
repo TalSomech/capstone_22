@@ -29,3 +29,6 @@ results/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Experiments
+archived_experiments/
