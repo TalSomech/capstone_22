@@ -15,20 +15,23 @@ ENV/
 *.swo
 
 # Data
-data/
+data/*
+!data/.gitkeep
 *.csv
 *.pkl
 
 # Models
-models/
+models/*
+!models/.gitkeep
 *.h5
-*.pkl
 
 # Results
-results/
+results/*
+!results/.gitkeep
 
 # Jupyter
 .ipynb_checkpoints/
 
 # Experiments
-archived_experiments/
+archived_experiments/*
+!archived_experiments/.gitkeep
