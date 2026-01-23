@@ -1,3 +1,13 @@
 # requirements.txt
 scikit-learn
 pandas
+numpy
+optuna
+geopy
+pandas
+matplotlib
+seaborn
+ast
+re
+sklearn
+

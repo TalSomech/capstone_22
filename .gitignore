@@ -1,4 +1,6 @@
+# ======================
 # Python
+# ======================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -8,30 +10,79 @@ env/
 venv/
 ENV/
 
-# IDE
+# ======================
+# IDE / Editor
+# ======================
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# Data
+# ======================
+# Data (BIG FILES)
+# ======================
 data/*
 !data/.gitkeep
-*.csv
-*.pkl
 
-# Models
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.parquet
+*.feather
+*.json
+*.ndjson
+
+# ======================
+# Models / Artifacts
+# ======================
 models/*
 !models/.gitkeep
-*.h5
 
-# Results
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.ckpt
+*.onnx
+
+# ======================
+# Numpy / Scipy
+# ======================
+*.npy
+*.npz
+
+# ======================
+# Results / Outputs
+# ======================
 results/*
 !results/.gitkeep
 
+*.png
+*.jpg
+*.jpeg
+*.svg
+*.pdf
+
+# ======================
 # Jupyter
+# ======================
 .ipynb_checkpoints/
 
+# ======================
+# Logs
+# ======================
+*.log
+logs/
+
+# ======================
 # Experiments
+# ======================
 archived_experiments/*
 !archived_experiments/.gitkeep
+
+# ======================
+# OS
+# ======================
+.DS_Store
+Thumbs.db
