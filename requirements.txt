@@ -7,7 +7,3 @@ geopy
 pandas
 matplotlib
 seaborn
-ast
-re
-sklearn
-
