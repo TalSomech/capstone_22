@@ -17,6 +17,7 @@ from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from category_encoders import TargetEncoder
 
 import joblib
+import wandb
 
 # -----------------------------
 # Default paths
@@ -144,7 +145,7 @@ def get_model_configs(random_state: int) -> dict:
             },
         },
         "random_forest": {
-            "model": RandomForestRegressor(random_state=random_state, n_jobs=2),
+            "model": RandomForestRegressor(random_state=random_state, n_jobs=-1),
             "params": {
                 "model__n_estimators": [100, 200, 300],
                 "model__max_depth": [10, 20, 30, None],
@@ -244,7 +245,7 @@ def train_model(
             cv=cv_folds,
             scoring="neg_root_mean_squared_error",
             random_state=random_state,
-            n_jobs=2,
+            n_jobs=-1,
             verbose=1,
         )
         search.fit(X_train, y_train)
@@ -261,7 +262,7 @@ def train_model(
         pipeline, X_train, y_train,
         cv=cv_folds,
         scoring="neg_root_mean_squared_error",
-        n_jobs=2,
+        n_jobs=-1,
     )
     cv_rmse = -cv_scores.mean()
     cv_rmse_std = cv_scores.std()
@@ -330,7 +331,23 @@ def main():
     parser.add_argument("--no-tune", action="store_true", help="Skip hyperparameter tuning")
     parser.add_argument("--out-model", default=DEFAULT_MODEL_PATH, help="Path to save trained model")
     parser.add_argument("--out-metrics", default=DEFAULT_METRICS_PATH, help="Path to save metrics JSON")
+    parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases experiment tracking")
     args = parser.parse_args()
+
+    # Initialize wandb if enabled
+    use_wandb = args.wandb
+    if use_wandb:
+        wandb.init(
+            project="airbnb-capstone",
+            config={
+                "model_type": args.model_type,
+                "test_size": args.test_size,
+                "random_state": args.random_state,
+                "cv_folds": args.cv_folds,
+                "n_iter": args.n_iter,
+                "tune_hyperparams": not args.no_tune,
+            },
+        )
 
     print("=" * 60)
     print("LOADING DATA")
@@ -387,6 +404,45 @@ def main():
     print()
     print(f"Model saved to:   {args.out_model}")
     print(f"Metrics saved to: {args.out_metrics}")
+
+    # Log to wandb
+    if use_wandb:
+        # Log best hyperparameters
+        if metrics.get("best_params"):
+            wandb.config.update(metrics["best_params"])
+
+        # Log metrics
+        wandb.log({
+            "cv_rmse": metrics["cv_rmse_mean"],
+            "cv_rmse_std": metrics["cv_rmse_std"],
+            "test_rmse": metrics["test_rmse"],
+            "test_mae": metrics["test_mae"],
+            "test_r2": metrics["test_r2"],
+            "dummy_rmse": metrics["dummy_rmse"],
+            "improvement_vs_dummy": metrics["rmse_improvement_vs_dummy"],
+        })
+
+        # Log feature importances as a table
+        if feature_importance:
+            table = wandb.Table(columns=["feature", "importance"])
+            for feat, imp in feature_importance.items():
+                table.add_data(feat, imp)
+            wandb.log({
+                "feature_importance": wandb.plot.bar(
+                    table, "feature", "importance", title="Feature Importances"
+                ),
+            })
+
+        # Log model as artifact
+        artifact = wandb.Artifact(
+            f"model-{args.model_type}", type="model",
+            description=f"{args.model_type} trained on AirBnB data",
+        )
+        artifact.add_file(args.out_model)
+        wandb.log_artifact(artifact)
+
+        wandb.finish()
+        print("Wandb run finished.")
 
 
 if __name__ == "__main__":
