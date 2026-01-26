@@ -31,7 +31,7 @@ TARGET_COL = "review_scores_rating"
 TARGET_ENCODE_COLS = ["neighbourhood_cleansed", "property_type"]
 
 # Columns to exclude from features
-# See FEATURE_EXCLUSIONS.md for detailed reasoning
+# See md_files/FEATURE_EXCLUSIONS.md for detailed reasoning
 COLS_TO_EXCLUDE = [
     "city",                  # Generalization - model should work on any city
     "host_id",               # High cardinality identifier - causes overfitting
