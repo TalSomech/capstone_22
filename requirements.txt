@@ -4,6 +4,8 @@ pandas
 numpy
 optuna
 geopy
-pandas
 matplotlib
 seaborn
+category_encoders
+joblib
+wandb
