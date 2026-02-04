@@ -9,3 +9,5 @@ seaborn
 category_encoders
 joblib
 wandb
+invoke
+streamlit

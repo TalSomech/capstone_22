@@ -14,10 +14,11 @@ from sklearn.impute import SimpleImputer
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.linear_model import Ridge
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from category_encoders import TargetEncoder
 
 import joblib
 import wandb
+
+from utils import build_preprocessor, _ensure_parent_dir
 
 # -----------------------------
 # Default paths
@@ -27,113 +28,6 @@ DEFAULT_MODEL_PATH = "models/model.joblib"
 DEFAULT_METRICS_PATH = "results/metrics.json"
 
 TARGET_COL = "review_scores_rating"
-
-# Columns to use for target encoding (high cardinality categoricals)
-TARGET_ENCODE_COLS = ["neighbourhood_cleansed", "property_type"]
-
-# Columns to exclude from features
-# See md_files/FEATURE_EXCLUSIONS.md for detailed reasoning
-COLS_TO_EXCLUDE = [
-    "city",                  # Generalization - model should work on any city
-    "host_id",               # High cardinality identifier - causes overfitting
-    "room_type",             # Redundant with is_entire_home, is_private_room binary flags
-    # Note: neighbourhood_cleansed and property_type are NOW handled by TargetEncoder in pipeline
-
-    # Availability Bloat - 8 variables for "minimum nights" is extreme collinearity
-    "minimum_minimum_nights", "maximum_minimum_nights",
-    "minimum_maximum_nights", "maximum_maximum_nights",
-    "minimum_nights_avg_ntm", "maximum_nights_avg_ntm",
-    "availability_30", "availability_60", "availability_90",  # Subsets of availability_365
-
-    # Review Redundancy - correlate heavily with reviews_per_month
-    "number_of_reviews_ltm", "number_of_reviews_l30d",
-
-    # Host Count Redundancy - breakdown of host_listings_count
-    "calculated_host_listings_count_entire_homes",
-    "calculated_host_listings_count_private_rooms",
-    "calculated_host_listings_count_shared_rooms",
-    "host_total_listings_count",  # Duplicate of host_listings_count
-
-    # Low Variance - nearly always 1 (True), no splitting power
-    "host_has_profile_pic",
-
-    # Negative Permutation Importance - adding noise, not signal
-    # See results/diagnostics/permutation_importance.csv
-    "has_washer", "description_word_count", "has_kitchen", "is_entire_home",
-    "has_dryer", "has_self_checkin", "has_pets_allowed", "has_free_parking",
-    "is_private_room", "has_neighborhood_overview", "has_carbon_alarm",
-    "host_about_length", "has_tv", "bedrooms", "host_acceptance_rate",
-    "bathrooms", "has_fire_extinguisher", "name_length", "has_pool",
-    "accommodates", "has_ac", "beds",
-
-    # Replaced by log transforms (avoid collinearity with log_ versions)
-    "number_of_reviews",  # Use log_number_of_reviews instead
-    "host_listings_count",  # Use log_host_listings_count instead (dropped in preprocess)
-]
-
-
-def _ensure_parent_dir(path: str) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-
-
-def build_preprocessor(
-    numeric_cols: list,
-    categorical_cols: list,
-    target_encode_cols: list = None,
-) -> ColumnTransformer:
-    """
-    Build sklearn preprocessing pipeline with Target Encoding for high-cardinality features.
-
-    Args:
-        numeric_cols: List of numeric feature columns
-        categorical_cols: List of categorical columns for one-hot encoding
-        target_encode_cols: List of columns for target encoding (e.g., neighbourhood)
-    """
-    target_encode_cols = target_encode_cols or []
-
-    # Separate categorical columns: target-encoded vs one-hot encoded
-    onehot_cols = [c for c in categorical_cols if c not in target_encode_cols]
-
-    # --- Transformers ---
-
-    # Numeric: Fill missing values, then scale
-    numeric_transformer = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="median")),
-        ("scaler", StandardScaler()),
-    ])
-
-    # Target Encoding: Best for high-cardinality features like Neighborhoods
-    # smoothing=10.0 prevents overfitting on small neighborhoods
-    target_transformer = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("encoder", TargetEncoder(smoothing=10.0)),
-    ])
-
-    # One-Hot Encoding: Best for low-cardinality features
-    onehot_transformer = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
-    ])
-
-    # --- Assemble ---
-    transformers = [
-        ("num", numeric_transformer, numeric_cols),
-    ]
-
-    # Only add target transformer if there are columns to encode
-    if target_encode_cols:
-        transformers.append(("target", target_transformer, target_encode_cols))
-
-    # Only add onehot transformer if there are columns to encode
-    if onehot_cols:
-        transformers.append(("cat", onehot_transformer, onehot_cols))
-
-    preprocessor = ColumnTransformer(
-        transformers=transformers,
-        remainder="drop",
-    )
-    return preprocessor
-
 
 def get_model_configs(random_state: int) -> dict:
     """Return model configurations with hyperparameter search spaces."""
@@ -190,8 +84,8 @@ def train_model(
         (pipeline, metrics_dict, feature_importance_dict)
     """
     # Prepare features and target
-    exclude_cols = [c for c in COLS_TO_EXCLUDE if c in df.columns]
-    X = df.drop(columns=[TARGET_COL] + exclude_cols)
+    # exclude_cols = [c for c in COLS_TO_EXCLUDE if c in df.columns]
+    X = df.drop(columns=[TARGET_COL])
     y = df[TARGET_COL]
 
     # Split data FIRST (before target encoding to avoid leakage)
@@ -209,6 +103,7 @@ def train_model(
     categorical_cols = [c for c in X_train.columns if c not in numeric_cols]
 
     # Identify which categorical columns should use target encoding (high cardinality)
+    from preprocess import TARGET_ENCODE_COLS
     target_encode_cols = [c for c in TARGET_ENCODE_COLS if c in categorical_cols]
     onehot_cols = [c for c in categorical_cols if c not in target_encode_cols]
 

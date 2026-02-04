@@ -10,8 +10,7 @@ DEFAULT_PREDICTIONS_CSV = "results/predictions.csv"
 DEFAULT_RESULTS_JSON = "results/prediction_summary.json"
 
 
-def _ensure_parent_dir(path: str) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
+
 
 
 def summarize_predictions(pred_csv: str, out_json: str):

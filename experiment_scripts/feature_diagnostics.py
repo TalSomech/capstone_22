@@ -27,6 +27,8 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 import joblib
 
+from utils import _ensure_parent_dir
+
 # -----------------------------
 # Default paths
 # -----------------------------
@@ -51,8 +53,6 @@ COLS_TO_EXCLUDE = [
 ]
 
 
-def _ensure_dir(path: str) -> None:
-    Path(path).mkdir(parents=True, exist_ok=True)
 
 
 def load_and_prepare_data(csv_path: str):
@@ -328,7 +328,8 @@ def main():
     parser.add_argument("--random-state", type=int, default=42, help="Random state")
     args = parser.parse_args()
 
-    _ensure_dir(args.out_dir)
+    _ensure_parent_dir(args.out_dir)
+
 
     print("=" * 60)
     print("FEATURE DIAGNOSTICS")

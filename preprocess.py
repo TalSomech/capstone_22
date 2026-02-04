@@ -1,18 +1,35 @@
 # preprocess.py
 import argparse
 import json
+import os
 import re
 from pathlib import Path
 
+import joblib
 import pandas as pd
 import numpy as np
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.impute import SimpleImputer
+from category_encoders import TargetEncoder
+
+from utils import _ensure_parent_dir
+
+# # -----------------------------
+# # Default paths (edit as needed)
+# # -----------------------------
+# DEFAULT_LA_PATH = "data/raw/listingsLA.csv"
+# DEFAULT_NYC_PATH = "data/raw/listingsNYC.csv"
+#
+# DEFAULT_OUTPUT_CSV = "data/processed/listings_combined_clean.csv"
+# DEFAULT_SUMMARY_JSON = "data/processed/cleaning_summary.json"
+#
+# TARGET_COL = "review_scores_rating"
 
 # -----------------------------
-# Default paths (edit as needed)
+# Default paths
 # -----------------------------
-DEFAULT_LA_PATH = "data/raw/listingsLA.csv"
-DEFAULT_NYC_PATH = "data/raw/listingsNYC.csv"
-
 DEFAULT_OUTPUT_CSV = "data/processed/listings_combined_clean.csv"
 DEFAULT_SUMMARY_JSON = "data/processed/cleaning_summary.json"
 
@@ -31,6 +48,49 @@ COLUMNS_TO_DROP = [
     # Names - PII, don't generalize
     "host_name",
 ]
+
+TARGET_ENCODE_COLS = ["neighbourhood_cleansed", "property_type"]
+
+# Columns to exclude from final features
+# See md_files/FEATURE_EXCLUSIONS.md for detailed reasoning
+COLS_TO_EXCLUDE = [
+    # "city",                  # Generalization - model should work on any city
+    "host_id",  # High cardinality identifier - causes overfitting
+    "room_type",  # Redundant with is_entire_home, is_private_room binary flags
+    # Note: neighbourhood_cleansed and property_type are NOW handled by TargetEncoder in pipeline
+
+    # Availability Bloat - 8 variables for "minimum nights" is extreme collinearity
+    "minimum_minimum_nights", "maximum_minimum_nights",
+    "minimum_maximum_nights", "maximum_maximum_nights",
+    "minimum_nights_avg_ntm", "maximum_nights_avg_ntm",
+    "availability_30", "availability_60", "availability_90",  # Subsets of availability_365
+
+    # Review Redundancy - correlate heavily with reviews_per_month
+    "number_of_reviews_ltm", "number_of_reviews_l30d",
+
+    # Host Count Redundancy - breakdown of host_listings_count
+    "calculated_host_listings_count_entire_homes",
+    "calculated_host_listings_count_private_rooms",
+    "calculated_host_listings_count_shared_rooms",
+    "host_total_listings_count",  # Duplicate of host_listings_count
+
+    # Low Variance - nearly always 1 (True), no splitting power
+    "host_has_profile_pic",
+
+    # Negative Permutation Importance - adding noise, not signal
+    # See results/diagnostics/permutation_importance.csv
+    "has_washer", "description_word_count", "has_kitchen", "is_entire_home",
+    "has_dryer", "has_self_checkin", "has_pets_allowed", "has_free_parking",
+    "is_private_room", "has_neighborhood_overview", "has_carbon_alarm",
+    "host_about_length", "has_tv", "bedrooms", "host_acceptance_rate",
+    "bathrooms", "has_fire_extinguisher", "name_length", "has_pool",
+    "accommodates", "has_ac", "beds",
+
+    # Replaced by log transforms (avoid collinearity with log_ versions)
+    "number_of_reviews",  # Use log_number_of_reviews instead
+    "host_listings_count",  # Use log_host_listings_count instead (dropped in preprocess)
+]
+
 
 
 def clean_price(price_series: pd.Series) -> pd.Series:
@@ -66,6 +126,7 @@ def clean_boolean(bool_series: pd.Series) -> pd.Series:
 
 def extract_amenities_count(amenities_series: pd.Series) -> pd.Series:
     """Count number of amenities from JSON-like string."""
+
     def count_amenities(x):
         if pd.isna(x):
             return 0
@@ -76,6 +137,7 @@ def extract_amenities_count(amenities_series: pd.Series) -> pd.Series:
         except (json.JSONDecodeError, TypeError):
             # Fallback: count commas
             return str(x).count(",") + 1 if str(x).strip() else 0
+
     return amenities_series.apply(count_amenities)
 
 
@@ -179,6 +241,7 @@ def extract_word_count(text_series: pd.Series) -> pd.Series:
 
 def extract_host_verifications_count(verif_series: pd.Series) -> pd.Series:
     """Count number of host verifications."""
+
     def count_verifications(x):
         if pd.isna(x):
             return 0
@@ -187,6 +250,7 @@ def extract_host_verifications_count(verif_series: pd.Series) -> pd.Series:
             return len(items)
         except (json.JSONDecodeError, TypeError, AttributeError):
             return str(x).count(",") + 1 if str(x).strip() else 0
+
     return verif_series.apply(count_verifications)
 
 
@@ -231,7 +295,7 @@ def apply_log_transforms(df: pd.DataFrame, columns: list) -> pd.DataFrame:
     return df
 
 
-def preprocess(la_path: str, nyc_path: str, drop_missing_target: bool = True):
+def run_initial_cleaning(file_inputs, drop_missing_target: bool = True):
     """
     Loads LA + NYC listings, performs feature engineering and cleaning.
 
@@ -245,147 +309,160 @@ def preprocess(la_path: str, nyc_path: str, drop_missing_target: bool = True):
 
     Returns (df_clean, cleaning_summary).
     """
-    # Load data
-    df_la = pd.read_csv(la_path)
-    df_la["city"] = "LA"
+    if isinstance(file_inputs, str):
+        paths = [file_inputs]
+    elif isinstance(file_inputs, list):
+        paths = file_inputs
+    else:
+        raise ValueError("file_inputs must be a string path or a list of paths.")
 
-    df_nyc = pd.read_csv(nyc_path)
-    df_nyc["city"] = "NYC"
+    processed_dfs = []
+    total_original_rows = 0
+    total_original_cols = 0
+    for path in paths:
+        if not os.path.exists(path):
+            print(f"Warning: Path {path} does not exist. Skipping.")
+            continue
 
-    df = pd.concat([df_la, df_nyc], ignore_index=True)
-    original_rows = len(df)
-    original_cols = len(df.columns)
+        df = pd.read_csv(path)
+        total_original_rows += len(df)
+        total_original_cols = max(total_original_cols, len(df.columns))
+        # =========================================
+        # 1. CLEAN PRICE COLUMN
+        # =========================================
+        if "price" in df.columns:
+            df["price"] = clean_price(df["price"])
 
-    # =========================================
-    # 1. CLEAN PRICE COLUMN
-    # =========================================
-    if "price" in df.columns:
-        df["price"] = clean_price(df["price"])
+        # =========================================
+        # 2. CLEAN PERCENTAGE COLUMNS
+        # =========================================
+        pct_cols = ["host_response_rate", "host_acceptance_rate"]
+        for col in pct_cols:
+            if col in df.columns:
+                df[col] = clean_percentage(df[col])
 
-    # =========================================
-    # 2. CLEAN PERCENTAGE COLUMNS
-    # =========================================
-    pct_cols = ["host_response_rate", "host_acceptance_rate"]
-    for col in pct_cols:
-        if col in df.columns:
-            df[col] = clean_percentage(df[col])
+        # =========================================
+        # 3. CLEAN BOOLEAN COLUMNS
+        # =========================================
+        bool_cols = ["host_is_superhost", "host_has_profile_pic",
+                     "host_identity_verified", "instant_bookable", "has_availability"]
+        for col in bool_cols:
+            if col in df.columns:
+                df[col] = clean_boolean(df[col])
 
-    # =========================================
-    # 3. CLEAN BOOLEAN COLUMNS
-    # =========================================
-    bool_cols = ["host_is_superhost", "host_has_profile_pic",
-                 "host_identity_verified", "instant_bookable", "has_availability"]
-    for col in bool_cols:
-        if col in df.columns:
-            df[col] = clean_boolean(df[col])
+        # =========================================
+        # 4. FEATURE EXTRACTION FROM TEXT COLUMNS
+        # =========================================
+        # Extract features BEFORE dropping text columns
 
-    # =========================================
-    # 4. FEATURE EXTRACTION FROM TEXT COLUMNS
-    # =========================================
-    # Extract features BEFORE dropping text columns
+        # Amenities count + key amenity binary features
+        if "amenities" in df.columns:
+            df["amenities_count"] = extract_amenities_count(df["amenities"])
+            # Extract key amenities as binary features
+            key_amenities_df = extract_key_amenities(df["amenities"])
+            df = pd.concat([df, key_amenities_df], axis=1)
 
-    # Amenities count + key amenity binary features
-    if "amenities" in df.columns:
-        df["amenities_count"] = extract_amenities_count(df["amenities"])
-        # Extract key amenities as binary features
-        key_amenities_df = extract_key_amenities(df["amenities"])
-        df = pd.concat([df, key_amenities_df], axis=1)
+        # Description features
+        if "description" in df.columns:
+            df["description_length"] = extract_text_length(df["description"])
+            df["description_word_count"] = extract_word_count(df["description"])
+            # Text mining: luxury and warning keywords
+            df["luxury_count"] = extract_luxury_score(df["description"])
+            df["warning_count"] = extract_warning_score(df["description"])
 
-    # Description features
-    if "description" in df.columns:
-        df["description_length"] = extract_text_length(df["description"])
-        df["description_word_count"] = extract_word_count(df["description"])
-        # Text mining: luxury and warning keywords
-        df["luxury_count"] = extract_luxury_score(df["description"])
-        df["warning_count"] = extract_warning_score(df["description"])
+        # Name length
+        if "name" in df.columns:
+            df["name_length"] = extract_text_length(df["name"])
 
-    # Name length
-    if "name" in df.columns:
-        df["name_length"] = extract_text_length(df["name"])
+        # Neighborhood overview (binary: has or not)
+        if "neighborhood_overview" in df.columns:
+            df["has_neighborhood_overview"] = df["neighborhood_overview"].notna().astype(int)
 
-    # Neighborhood overview (binary: has or not)
-    if "neighborhood_overview" in df.columns:
-        df["has_neighborhood_overview"] = df["neighborhood_overview"].notna().astype(int)
+        # Host about (binary + length)
+        if "host_about" in df.columns:
+            df["has_host_about"] = df["host_about"].notna().astype(int)
+            df["host_about_length"] = extract_text_length(df["host_about"])
 
-    # Host about (binary + length)
-    if "host_about" in df.columns:
-        df["has_host_about"] = df["host_about"].notna().astype(int)
-        df["host_about_length"] = extract_text_length(df["host_about"])
+        # Host verifications count
+        if "host_verifications" in df.columns:
+            df["host_verifications_count"] = extract_host_verifications_count(df["host_verifications"])
 
-    # Host verifications count
-    if "host_verifications" in df.columns:
-        df["host_verifications_count"] = extract_host_verifications_count(df["host_verifications"])
+        # =========================================
+        # 4b. HOST EXPERIENCE (days since joining)
+        # =========================================
+        if "host_since" in df.columns:
+            df["host_experience_days"] = extract_host_experience_days(df["host_since"])
 
-    # =========================================
-    # 4b. HOST EXPERIENCE (days since joining)
-    # =========================================
-    if "host_since" in df.columns:
-        df["host_experience_days"] = extract_host_experience_days(df["host_since"])
+        # =========================================
+        # 4c. RESPONSE TIME ENCODING (numeric)
+        # =========================================
+        if "host_response_time" in df.columns:
+            df["response_time_score"] = encode_response_time(df["host_response_time"])
 
-    # =========================================
-    # 4c. RESPONSE TIME ENCODING (numeric)
-    # =========================================
-    if "host_response_time" in df.columns:
-        df["response_time_score"] = encode_response_time(df["host_response_time"])
+        # =========================================
+        # 4d. RATIO FEATURES (value/comfort metrics)
+        # =========================================
+        # Price per person (value for money)
+        if "price" in df.columns and "accommodates" in df.columns:
+            df["price_per_person"] = df["price"] / df["accommodates"].replace(0, 1)
 
-    # =========================================
-    # 4d. RATIO FEATURES (value/comfort metrics)
-    # =========================================
-    # Price per person (value for money)
-    if "price" in df.columns and "accommodates" in df.columns:
-        df["price_per_person"] = df["price"] / df["accommodates"].replace(0, 1)
+        # Space comfort ratios
+        if "bedrooms" in df.columns and "accommodates" in df.columns:
+            df["bedrooms_per_person"] = df["bedrooms"] / df["accommodates"].replace(0, 1)
 
-    # Space comfort ratios
-    if "bedrooms" in df.columns and "accommodates" in df.columns:
-        df["bedrooms_per_person"] = df["bedrooms"] / df["accommodates"].replace(0, 1)
+        if "beds" in df.columns and "accommodates" in df.columns:
+            df["beds_per_person"] = df["beds"] / df["accommodates"].replace(0, 1)
 
-    if "beds" in df.columns and "accommodates" in df.columns:
-        df["beds_per_person"] = df["beds"] / df["accommodates"].replace(0, 1)
+        # Bathroom ratio
+        if "bathrooms" in df.columns and "accommodates" in df.columns:
+            df["bathrooms_per_person"] = df["bathrooms"] / df["accommodates"].replace(0, 1)
 
-    # Bathroom ratio
-    if "bathrooms" in df.columns and "accommodates" in df.columns:
-        df["bathrooms_per_person"] = df["bathrooms"] / df["accommodates"].replace(0, 1)
+        # Interaction: Minimum stay commitment cost
+        # High price + long minimum stay = higher risk for guests
+        if "price" in df.columns and "minimum_nights" in df.columns:
+            df["min_stay_cost"] = df["price"] * df["minimum_nights"]
 
-    # Interaction: Minimum stay commitment cost
-    # High price + long minimum stay = higher risk for guests
-    if "price" in df.columns and "minimum_nights" in df.columns:
-        df["min_stay_cost"] = df["price"] * df["minimum_nights"]
+        # =========================================
+        # 4e. ROOM TYPE ENCODING
+        # =========================================
+        if "room_type" in df.columns:
+            df["is_entire_home"] = (df["room_type"] == "Entire home/apt").astype(int)
+            df["is_private_room"] = (df["room_type"] == "Private room").astype(int)
 
-    # =========================================
-    # 4e. ROOM TYPE ENCODING
-    # =========================================
-    if "room_type" in df.columns:
-        df["is_entire_home"] = (df["room_type"] == "Entire home/apt").astype(int)
-        df["is_private_room"] = (df["room_type"] == "Private room").astype(int)
+        # =========================================
+        # 4f. SAFETY SCORE (count of safety amenities)
+        # =========================================
+        safety_cols = ["has_smoke_alarm", "has_carbon_alarm", "has_fire_extinguisher", "has_first_aid"]
+        existing_safety_cols = [c for c in safety_cols if c in df.columns]
+        if existing_safety_cols:
+            df["safety_amenities_count"] = df[existing_safety_cols].sum(axis=1)
 
-    # =========================================
-    # 4f. SAFETY SCORE (count of safety amenities)
-    # =========================================
-    safety_cols = ["has_smoke_alarm", "has_carbon_alarm", "has_fire_extinguisher", "has_first_aid"]
-    existing_safety_cols = [c for c in safety_cols if c in df.columns]
-    if existing_safety_cols:
-        df["safety_amenities_count"] = df[existing_safety_cols].sum(axis=1)
+        # =========================================
+        # 4g. LOG TRANSFORMS (for skewed features)
+        # =========================================
+        # These features have long tails that can hurt model performance
+        # Note: Applied AFTER ratio/interaction features are computed
+        skewed_features = ["number_of_reviews", "host_listings_count"]
+        df = apply_log_transforms(df, skewed_features)
 
-    # =========================================
-    # 4g. LOG TRANSFORMS (for skewed features)
-    # =========================================
-    # These features have long tails that can hurt model performance
-    # Note: Applied AFTER ratio/interaction features are computed
-    skewed_features = ["number_of_reviews", "host_listings_count"]
-    df = apply_log_transforms(df, skewed_features)
+        # Log transform price and minimum_nights separately (keep originals for ratios)
+        if "price" in df.columns:
+            df["log_price"] = np.log1p(df["price"].fillna(0).clip(lower=0))
+        if "minimum_nights" in df.columns:
+            df["log_minimum_nights"] = np.log1p(df["minimum_nights"].fillna(0).clip(lower=0))
 
-    # Log transform price and minimum_nights separately (keep originals for ratios)
-    if "price" in df.columns:
-        df["log_price"] = np.log1p(df["price"].fillna(0).clip(lower=0))
-    if "minimum_nights" in df.columns:
-        df["log_minimum_nights"] = np.log1p(df["minimum_nights"].fillna(0).clip(lower=0))
+        processed_dfs.append(df)
 
+    if not processed_dfs:
+        return pd.DataFrame(), {}
+
+    # Combine all chunks
+    df = pd.concat(processed_dfs, ignore_index=True)
     # =========================================
     # 5. DROP UNNECESSARY COLUMNS
     # =========================================
     cols_to_drop = [c for c in COLUMNS_TO_DROP if c in df.columns]
     df = df.drop(columns=cols_to_drop)
-
     # =========================================
     # 6. DROP ROWS WITH MISSING TARGET
     # =========================================
@@ -393,14 +470,12 @@ def preprocess(la_path: str, nyc_path: str, drop_missing_target: bool = True):
     if drop_missing_target and TARGET_COL in df.columns:
         df = df.dropna(subset=[TARGET_COL])
     rows_dropped_missing_target = rows_before_target_drop - len(df)
-
     # =========================================
     # 7. REMOVE DUPLICATES
     # =========================================
     rows_before_dedup = len(df)
     df = df.drop_duplicates()
     duplicates_removed = rows_before_dedup - len(df)
-
     # Build summary
     new_features = [
         # Original features
@@ -430,10 +505,9 @@ def preprocess(la_path: str, nyc_path: str, drop_missing_target: bool = True):
         "log_number_of_reviews", "log_host_listings_count",
         "log_price", "log_minimum_nights",
     ]
-
     cleaning_summary = {
-        "original_rows": original_rows,
-        "original_cols": original_cols,
+        "original_rows": total_original_rows,
+        "original_cols": total_original_cols,
         "rows_dropped_missing_target": rows_dropped_missing_target,
         "duplicates_removed": duplicates_removed,
         "final_rows": len(df),
@@ -441,20 +515,37 @@ def preprocess(la_path: str, nyc_path: str, drop_missing_target: bool = True):
         "columns_dropped": cols_to_drop,
         "features_created": new_features,
     }
-
     return df, cleaning_summary
 
 
-def _ensure_parent_dir(path: str) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
+
+def preprocess(file_inputs, drop_missing_target: bool = True):
+    # 1. Run your existing multi-file cleaning and feature extraction
+    df, summary = run_initial_cleaning(file_inputs, drop_missing_target)
+
+    # 2. Final Feature Selection
+    # Keep categorical strings (like neighborhood) so train.py can encode them
+    # We only drop the columns explicitly marked for exclusion
+    cols_to_drop = [TARGET_COL] + COLS_TO_EXCLUDE
+    X = df.drop(columns=[c for c in cols_to_drop if c in df.columns], errors='ignore')
+    y = df[TARGET_COL] if TARGET_COL in df.columns else None
+
+    if y is not None:
+        df_gold = pd.concat([X, y], axis=1)
+    else:
+        df_gold = X
+
+    summary["final_rows"] = len(df_gold)
+    summary["final_cols"] = len(df_gold.columns)
+    return df_gold, summary
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="AirBnB preprocessing: feature engineering, cleaning, and merging LA + NYC data."
+        description="AirBnB preprocessing for one or multiple files: feature engineering, cleaning, and merging"
     )
-    parser.add_argument("--la-path", default=DEFAULT_LA_PATH, help="Path to listingsLA.csv")
-    parser.add_argument("--nyc-path", default=DEFAULT_NYC_PATH, help="Path to listingsNYC.csv")
+
+    parser.add_argument("input_paths", nargs="+", help="One or more paths to raw AirBnB CSV files")
     parser.add_argument("--out-csv", default=DEFAULT_OUTPUT_CSV, help="Output path for cleaned combined CSV")
     parser.add_argument("--out-summary", default=DEFAULT_SUMMARY_JSON, help="Output path for cleaning summary JSON")
     parser.add_argument(
@@ -462,15 +553,17 @@ def main():
         action="store_true",
         help="If set, keep rows with missing target (for inference mode)"
     )
-    args = parser.parse_args()
 
-    df_clean, summary = preprocess(
-        args.la_path,
-        args.nyc_path,
-        drop_missing_target=not args.keep_missing_target
-    )
+
+    args = parser.parse_args()
+    df_clean, summary = preprocess(args.input_paths,
+                                   drop_missing_target=not args.keep_missing_target
+                                   )
 
     _ensure_parent_dir(args.out_csv)
+
+
+
     df_clean.to_csv(args.out_csv, index=False)
 
     _ensure_parent_dir(args.out_summary)
@@ -497,4 +590,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
