@@ -10,4 +10,5 @@ category_encoders
 joblib
 wandb
 invoke
+optuna
 streamlit
