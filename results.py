@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from utils import _ensure_parent_dir
 
 DEFAULT_PREDICTIONS_CSV = "results/predictions.csv"
 DEFAULT_RESULTS_JSON = "results/prediction_summary.json"
@@ -25,6 +26,7 @@ def summarize_predictions(pred_csv: str, out_json: str):
     }
 
     _ensure_parent_dir(out_json)
+
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
