@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from utils import _ensure_parent_dir
 
 DEFAULT_PREDICTIONS_CSV = "results/predictions.csv"
 DEFAULT_RESULTS_JSON = "results/prediction_summary.json"
