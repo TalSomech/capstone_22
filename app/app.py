@@ -8,11 +8,20 @@ import json
 from pathlib import Path
 from sklearn.model_selection import train_test_split
 
+import os
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_PATH = BASE_DIR / "data" / "processed" / "listings_combined_clean.csv"
 MODEL_PATH = BASE_DIR / "models" / "model.joblib"
 METRICS_PATH = BASE_DIR / "results" / "metrics.json"
 TEMPLATE_PATH = BASE_DIR / "models" / "feature_template.json"
+
+# Debug: print paths at startup (visible in Streamlit Cloud logs)
+print(f"DEBUG: __file__ = {__file__}")
+print(f"DEBUG: BASE_DIR = {BASE_DIR}")
+print(f"DEBUG: MODEL_PATH = {MODEL_PATH}")
+print(f"DEBUG: MODEL_PATH.exists() = {MODEL_PATH.exists()}")
+print(f"DEBUG: Contents of models dir: {list((BASE_DIR / 'models').glob('*')) if (BASE_DIR / 'models').exists() else 'DIR NOT FOUND'}")
 
 TARGET_COL = "review_scores_rating"
 
@@ -762,6 +771,14 @@ def main():
     st.sidebar.markdown("**Data:** Inside Airbnb (LA + NYC)")
     st.sidebar.markdown("**Model:** XGBoost Regression")
     st.sidebar.markdown("**Features:** 37 (lean set)")
+
+    # Debug info (remove after fixing)
+    with st.sidebar.expander("Debug Info"):
+        st.text(f"BASE_DIR: {BASE_DIR}")
+        st.text(f"Model exists: {MODEL_PATH.exists()}")
+        st.text(f"Models dir exists: {(BASE_DIR / 'models').exists()}")
+        if (BASE_DIR / 'models').exists():
+            st.text(f"Models dir contents: {os.listdir(BASE_DIR / 'models')}")
 
 
 if __name__ == "__main__":
