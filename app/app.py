@@ -341,10 +341,6 @@ def page_predict():
     df = load_data()
     model = load_model()
 
-    if model is None:
-        st.error("Model file not available. Cannot make predictions.")
-        return
-
     if df is None:
         st.info("Base data file not available. Only batch CSV upload is available.")
         page_predict_batch(df, model)
@@ -394,16 +390,21 @@ def page_predict_batch(df, model):
                 return
 
             if st.button("Generate Predictions", type="primary"):
-                with st.spinner("Preparing data and generating predictions..."):
-                    _, X_template, _, _ = prepare_model_data(df)
-                    expected_cols = X_template.columns.tolist()
+                if model is None:
+                    st.error("Model file not available. Cannot generate predictions.")
+                elif df is None:
+                    st.warning("Base data file not available for feature alignment.")
+                else:
+                    with st.spinner("Preparing data and generating predictions..."):
+                        _, X_template, _, _ = prepare_model_data(df)
+                        expected_cols = X_template.columns.tolist()
 
-                    pred_df = prepare_batch_for_prediction(user_df, X_template, df)
+                        pred_df = prepare_batch_for_prediction(user_df, X_template, df)
 
-                    predictions = model.predict(pred_df)
+                        predictions = model.predict(pred_df)
 
-                    result_df = user_df.copy()
-                    result_df["predicted_rating"] = predictions
+                        result_df = user_df.copy()
+                        result_df["predicted_rating"] = predictions
 
                     def get_category(rating):
                         if rating >= 4.8:
