@@ -1,6 +1,7 @@
 # train.py
 import argparse
 import json
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -28,6 +29,13 @@ from optuna.integration import OptunaSearchCV
 from optuna.distributions import IntDistribution, FloatDistribution, CategoricalDistribution
 
 from utils import build_preprocessor, _ensure_parent_dir
+
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not installed, will use system environment variables
 
 # -----------------------------
 # Default paths
@@ -110,15 +118,20 @@ def get_model_configs(random_state: int) -> dict:
             },
         },
         "mlp": {
-            "model": MLPRegressor(random_state=random_state, max_iter=1000, early_stopping=True),
+            "model": MLPRegressor(random_state=random_state, max_iter=100, early_stopping=True),
             "params": {
-                # OptunaSearchCV handles hidden_layer_sizes differently
-                # We'll use string representations that get converted
                 "model__hidden_layer_sizes": CategoricalDistribution([
-                    "50", "100", "150",              # Single layer architectures
-                    "100,50", "150,75",              # Two layer architectures
-                    "100,50,25", "150,100,50"        # Three layer architectures
+                    (50,), (100,), (150,),
+                    (100, 50), (150, 75),
+                    (100, 50, 25), (150, 100, 50),
                 ]),
+                # # OptunaSearchCV handles hidden_layer_sizes differently
+                # # We'll use string representations that get converted
+                # "model__hidden_layer_sizes": CategoricalDistribution([
+                #     "50", "100", "150",              # Single layer architectures
+                #     "100,50", "150,75",              # Two layer architectures
+                #     "100,50,25", "150,100,50"        # Three layer architectures
+                # ]),
                 "model__activation": CategoricalDistribution(["relu", "tanh"]),
                 "model__alpha": FloatDistribution(0.00001, 0.1, log=True),
                 "model__learning_rate_init": FloatDistribution(0.0001, 0.01, log=True),
@@ -186,6 +199,7 @@ def train_model(
 
     # Build preprocessor with target encoding integrated
     preprocessor = build_preprocessor(numeric_cols, categorical_cols, target_encode_cols)
+    # x_train=preprocessor.fit_transform(X_train)
 
     # Get model config
     model_configs = get_model_configs(random_state)
@@ -206,24 +220,25 @@ def train_model(
 
         # Create Optuna study with optional wandb integration
         study = optuna.create_study(
-            direction="minimize",
+            direction="maximize",
             study_name=f"{model_type}_optimization",
             sampler=optuna.samplers.TPESampler(seed=random_state),
         )
 
-        # Add wandb callback if enabled
+        # # Add wandb callback if enabled
         callbacks = []
-        if use_wandb:
-            try:
-                from optuna.integration.wandb import WeightsAndBiasesCallback
-                wandb_callback = WeightsAndBiasesCallback(
-                    metric_name="cv_rmse",
-                    wandb_kwargs={"project": "airbnb-capstone"}
-                )
-                callbacks.append(wandb_callback)
-                print("✓ Wandb callback enabled for Optuna trials")
-            except ImportError:
-                print("⚠ Wandb callback not available (optuna[wandb] not installed)")
+        # if use_wandb:
+        #     try:
+        #         from optuna.integration.wandb import WeightsAndBiasesCallback
+        #         wandb_callback = WeightsAndBiasesCallback(
+        #             metric_name="cv_rmse",
+        #             wandb_kwargs={"project": "airbnb-capstone"}
+        #
+        #         )
+        #         callbacks.append(wandb_callback)
+        #         print("✓ Wandb callback enabled for Optuna trials")
+        #     except ImportError:
+        #         print("⚠ Wandb callback not available (optuna[wandb] not installed)")
 
         search = OptunaSearchCV(
             estimator=pipeline,
@@ -233,7 +248,7 @@ def train_model(
             scoring="neg_root_mean_squared_error",
             random_state=random_state,
             n_jobs=-1,
-            verbose=1,
+            verbose=3,
             study=study,
             callbacks=callbacks if callbacks else None,
         )
@@ -354,8 +369,17 @@ def main():
     # Initialize wandb if enabled
     use_wandb = args.wandb
     if use_wandb:
+        # Login to WandB using API key from environment
+        wandb_api_key = os.getenv("WANDB_API_KEY")
+        if wandb_api_key:
+            wandb.login(key=wandb_api_key)
+            print("✓ Logged in to WandB successfully")
+        else:
+            print("⚠ Warning: WANDB_API_KEY not found in environment. Attempting anonymous mode...")
+
         wandb.init(
             project="airbnb-capstone",
+            entity="tawfeeksami-22",
             config={
                 "model_type": args.model_type,
                 "test_size": args.test_size,

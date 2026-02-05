@@ -454,7 +454,17 @@ def run_initial_cleaning(file_inputs, drop_missing_target: bool = True):
         processed_dfs.append(df)
 
     if not processed_dfs:
-        return pd.DataFrame(), {}
+        empty_summary = {
+            "original_rows": 0,
+            "original_cols": 0,
+            "rows_dropped_missing_target": 0,
+            "duplicates_removed": 0,
+            "final_rows": 0,
+            "final_cols": 0,
+            "columns_dropped": [],
+            "features_created": [],
+        }
+        return pd.DataFrame(), empty_summary
 
     # Combine all chunks
     df = pd.concat(processed_dfs, ignore_index=True)
@@ -556,6 +566,7 @@ def main():
 
 
     args = parser.parse_args()
+    print("args: ", args)
     df_clean, summary = preprocess(args.input_paths,
                                    drop_missing_target=not args.keep_missing_target
                                    )

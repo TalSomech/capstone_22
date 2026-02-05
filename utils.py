@@ -63,6 +63,7 @@ def build_preprocessor(
         transformers=transformers,
         remainder="drop",
     )
+
     return preprocessor
 
 

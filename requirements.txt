@@ -10,5 +10,6 @@ category_encoders
 joblib
 wandb
 invoke
-optuna
+optuna-integration
+python-dotenv
 streamlit

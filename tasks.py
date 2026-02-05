@@ -4,7 +4,7 @@ import shutil
 import glob
 from invoke import task
 # Define default paths
-RAW_DATA = "data/raw/listingsLA.csv data/raw/listingsNYC.csv"
+RAW_DATA = "data/raw/listings LA.csv data/raw/listings NYC.csv"
 CLEAN_DATA = "data/processed/listings_combined_clean.csv"
 MODEL_PATH = "models/model.joblib"
 PREDICTIONS = "results/predictions.csv"
@@ -46,7 +46,17 @@ def preprocess(c, inputs=RAW_DATA, output=CLEAN_DATA, inference=False):
     """
     print(f"🔨 Running Preprocessing on: {inputs}")
 
-    cmd = f"python preprocess.py {inputs} --out-csv {output}"
+    # Handle both string and list inputs, and properly quote paths with spaces
+    if isinstance(inputs, list):
+        quoted_inputs = ' '.join(f'"{path}"' for path in inputs)
+    elif isinstance(inputs, str):
+        # Split by spaces but preserve quoted paths
+        paths = inputs.split()
+        quoted_inputs = ' '.join(f'"{path}"' for path in paths)
+    else:
+        quoted_inputs = str(inputs)
+
+    cmd = f'python preprocess.py {quoted_inputs} --out-csv "{output}"'
 
     if inference:
         cmd += " --keep-missing-target"
