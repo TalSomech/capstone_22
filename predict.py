@@ -126,7 +126,7 @@ def main():
     _ensure_parent_dir(args.out_csv)
     output_df.to_csv(args.out_csv, index=False)
 
-    print("✅ Prediction complete")
+    print("Prediction complete")
     print(f"Model used:      {args.model_path}")
     print(f"Input data:      {args.in_csv}")
     print(f"Predictions to:  {args.out_csv}")
