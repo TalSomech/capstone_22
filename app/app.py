@@ -63,15 +63,21 @@ def load_data():
 def load_model():
     if not MODEL_PATH.exists():
         return None
-    return joblib.load(MODEL_PATH)
+    try:
+        return joblib.load(MODEL_PATH)
+    except Exception:
+        return None
 
 
 @st.cache_data
 def load_metrics():
     if not METRICS_PATH.exists():
         return None
-    with open(METRICS_PATH, "r") as f:
-        return json.load(f)
+    try:
+        with open(METRICS_PATH, "r") as f:
+            return json.load(f)
+    except Exception:
+        return None
 
 
 @st.cache_data
