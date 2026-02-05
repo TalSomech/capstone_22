@@ -1,4 +1,3 @@
-# app/app.py — Streamlit Dashboard for Airbnb Capstone
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -9,9 +8,6 @@ import json
 from pathlib import Path
 from sklearn.model_selection import train_test_split
 
-# =============================================================================
-# CONSTANTS
-# =============================================================================
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_PATH = BASE_DIR / "data" / "processed" / "listings_combined_clean.csv"
 MODEL_PATH = BASE_DIR / "models" / "model.joblib"
@@ -19,7 +15,6 @@ METRICS_PATH = BASE_DIR / "results" / "metrics.json"
 
 TARGET_COL = "review_scores_rating"
 
-# Same exclusions as train.py (lean feature set)
 COLS_TO_EXCLUDE = [
     "city", "host_id", "room_type",
     "minimum_minimum_nights", "maximum_minimum_nights",
@@ -44,7 +39,6 @@ NOISE_FEATURES = [
     "accommodates", "has_ac", "beds",
 ]
 
-# Response time encoding (same as train.py)
 RESPONSE_TIME_MAP = {
     "within an hour": 5,
     "within a few hours": 4,
@@ -52,63 +46,58 @@ RESPONSE_TIME_MAP = {
     "a few days or more": 2,
 }
 
-# City coordinates for map defaults
 CITY_COORDS = {
     "LA": {"lat": 34.05, "lon": -118.25},
     "NYC": {"lat": 40.73, "lon": -73.99},
 }
 
 
-# =============================================================================
-# CACHED DATA LOADING
-# =============================================================================
 @st.cache_data
 def load_data():
-    """Load the processed listings CSV."""
+    if not DATA_PATH.exists():
+        return None
     return pd.read_csv(DATA_PATH)
 
 
 @st.cache_resource
 def load_model():
-    """Load the trained sklearn pipeline."""
+    if not MODEL_PATH.exists():
+        return None
     return joblib.load(MODEL_PATH)
 
 
 @st.cache_data
 def load_metrics():
-    """Load the metrics JSON."""
+    if not METRICS_PATH.exists():
+        return None
     with open(METRICS_PATH, "r") as f:
         return json.load(f)
 
 
 @st.cache_data
 def prepare_model_data(_df):
-    """Prepare X, y and train/test split matching train.py exactly."""
     df = _df.copy()
 
-    # Apply same exclusions as train.py (lean mode)
     exclude_cols = [c for c in COLS_TO_EXCLUDE if c in df.columns]
     exclude_cols += [c for c in NOISE_FEATURES if c in df.columns and c not in exclude_cols]
 
     X = df.drop(columns=[TARGET_COL] + exclude_cols, errors="ignore")
     y = df[TARGET_COL]
 
-    # Same split parameters as train.py
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, shuffle=True
     )
     return X_train, X_test, y_train, y_test
 
 
-# =============================================================================
-# PAGE 1: EDA EXPLORER
-# =============================================================================
 def page_eda():
     st.header("Exploratory Data Analysis")
 
     df = load_data()
+    if df is None:
+        st.warning("Data file not available. Please use the Predict a Rating page to upload a CSV.")
+        return
 
-    # Key Stats Row
     st.subheader("Key Statistics")
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -123,7 +112,6 @@ def page_eda():
 
     st.markdown("---")
 
-    # Rating Distribution
     st.subheader("Rating Distribution")
     fig_rating = px.histogram(
         df, x=TARGET_COL, nbins=50,
@@ -141,7 +129,6 @@ def page_eda():
 
     st.markdown("---")
 
-    # City Comparison
     st.subheader("City Comparison: LA vs NYC")
     col1, col2 = st.columns(2)
 
@@ -161,7 +148,6 @@ def page_eda():
 
     st.markdown("---")
 
-    # Price vs Rating
     st.subheader("Price vs Rating")
     max_price = st.slider("Max price to display ($)", 50, 2000, 500)
 
@@ -179,7 +165,6 @@ def page_eda():
 
     st.markdown("---")
 
-    # Map of Listings
     st.subheader("Listings Map (colored by rating)")
 
     df_map = df.dropna(subset=["latitude", "longitude", TARGET_COL])
@@ -201,7 +186,6 @@ def page_eda():
 
     st.markdown("---")
 
-    # Room Type Distribution
     st.subheader("Room Type Distribution")
     fig_room = px.histogram(
         df, x="room_type", color="city", barmode="group",
@@ -210,17 +194,17 @@ def page_eda():
     st.plotly_chart(fig_room, use_container_width=True)
 
 
-# =============================================================================
-# PAGE 2: MODEL PERFORMANCE
-# =============================================================================
 def page_model():
     st.header("Model Performance")
 
     metrics_data = load_metrics()
+    if metrics_data is None:
+        st.warning("Metrics file not available.")
+        return
+
     metrics = metrics_data["metrics"]
     feature_importance = metrics_data["feature_importance"]
 
-    # Metrics Cards
     st.subheader("Test Set Metrics")
     col1, col2, col3, col4 = st.columns(4)
 
@@ -238,7 +222,6 @@ def page_model():
 
     st.markdown("---")
 
-    # Dummy vs Model Comparison
     st.subheader("Model vs Dummy Baseline")
     col1, col2 = st.columns(2)
 
@@ -270,10 +253,8 @@ def page_model():
 
     st.markdown("---")
 
-    # Feature Importance
     st.subheader("Top 20 Feature Importances")
 
-    # Clean feature names and sort
     fi_clean = {}
     for k, v in feature_importance.items():
         clean_name = k.replace("num__", "").replace("target__", "target_encoded_").replace("cat__", "")
@@ -293,16 +274,22 @@ def page_model():
 
     st.markdown("---")
 
-    # Predicted vs Actual
     st.subheader("Predicted vs Actual Ratings")
 
     df = load_data()
+    if df is None:
+        st.warning("Data file not available. Cannot generate predicted vs actual plot.")
+        return
+
     model = load_model()
+    if model is None:
+        st.warning("Model file not available.")
+        return
+
     _, X_test, _, y_test = prepare_model_data(df)
 
     y_pred = model.predict(X_test)
 
-    # Sample for visualization
     sample_size = min(5000, len(y_test))
     indices = np.random.RandomState(42).choice(len(y_test), sample_size, replace=False)
     y_test_sample = y_test.iloc[indices].values
@@ -324,7 +311,6 @@ def page_model():
 
     st.markdown("---")
 
-    # Residual Distribution
     st.subheader("Residual Distribution")
     residuals = y_test.values - y_pred
 
@@ -343,16 +329,21 @@ def page_model():
         st.metric("Std Residual", f"{residuals.std():.4f}")
 
 
-# =============================================================================
-# PAGE 3: PREDICT A RATING
-# =============================================================================
 def page_predict():
     st.header("Predict a Listing Rating")
 
     df = load_data()
     model = load_model()
 
-    # Choose input method
+    if model is None:
+        st.error("Model file not available. Cannot make predictions.")
+        return
+
+    if df is None:
+        st.info("Base data file not available. Only batch CSV upload is available.")
+        page_predict_batch(df, model)
+        return
+
     input_method = st.radio(
         "Choose input method:",
         ["Single Listing (Interactive)", "Batch Upload (CSV)"],
@@ -366,7 +357,6 @@ def page_predict():
 
 
 def page_predict_batch(df, model):
-    """Handle CSV batch predictions."""
     st.subheader("Upload CSV for Batch Predictions")
 
     st.markdown("""
@@ -390,27 +380,25 @@ def page_predict_batch(df, model):
             user_df = pd.read_csv(uploaded_file)
             st.success(f"Loaded {len(user_df):,} rows")
 
-            # Show preview
             st.markdown("**Preview of uploaded data:**")
             st.dataframe(user_df.head(10), use_container_width=True)
 
+            if df is None:
+                st.warning("Base data file not available. Cannot generate predictions without reference data for feature alignment.")
+                return
+
             if st.button("Generate Predictions", type="primary"):
                 with st.spinner("Preparing data and generating predictions..."):
-                    # Get model's expected columns
                     _, X_template, _, _ = prepare_model_data(df)
                     expected_cols = X_template.columns.tolist()
 
-                    # Build prediction DataFrame
                     pred_df = prepare_batch_for_prediction(user_df, X_template, df)
 
-                    # Generate predictions
                     predictions = model.predict(pred_df)
 
-                    # Add predictions to original data
                     result_df = user_df.copy()
                     result_df["predicted_rating"] = predictions
 
-                    # Add rating category
                     def get_category(rating):
                         if rating >= 4.8:
                             return "Excellent"
@@ -426,7 +414,6 @@ def page_predict_batch(df, model):
                 st.markdown("---")
                 st.subheader("Prediction Results")
 
-                # Summary stats
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("Total Predictions", f"{len(predictions):,}")
@@ -437,7 +424,6 @@ def page_predict_batch(df, model):
                 with col4:
                     st.metric("Max Predicted", f"{predictions.max():.2f}")
 
-                # Distribution chart
                 fig_dist = px.histogram(
                     result_df, x="predicted_rating", nbins=30,
                     color_discrete_sequence=["steelblue"],
@@ -446,10 +432,8 @@ def page_predict_batch(df, model):
                 fig_dist.update_layout(title="Distribution of Predicted Ratings")
                 st.plotly_chart(fig_dist, use_container_width=True)
 
-                # Results table
                 st.markdown("**Results Table:**")
                 display_cols = ["predicted_rating", "rating_category"]
-                # Add original columns that exist
                 for col in ["price", "accommodates", "property_type", "host_is_superhost"]:
                     if col in result_df.columns:
                         display_cols.append(col)
@@ -460,7 +444,6 @@ def page_predict_batch(df, model):
                     use_container_width=True,
                 )
 
-                # Download button
                 csv_output = result_df.to_csv(index=False)
                 st.download_button(
                     label="Download Results as CSV",
@@ -474,22 +457,16 @@ def page_predict_batch(df, model):
 
 
 def prepare_batch_for_prediction(user_df, X_template, reference_df):
-    """Prepare uploaded CSV data for model prediction."""
-    # Get template with median values
     template = X_template.median(numeric_only=True).to_dict()
 
-    # Get mode for categorical columns
     for col in X_template.select_dtypes(include=["object"]).columns:
         mode_vals = X_template[col].mode()
         template[col] = mode_vals.iloc[0] if len(mode_vals) > 0 else ""
 
-    # Build prediction rows
     rows = []
     for idx, row in user_df.iterrows():
         pred_row = template.copy()
 
-        # Map user columns to model columns
-        # Direct mappings (same name)
         direct_cols = [
             "price", "accommodates", "bedrooms", "beds", "bathrooms",
             "latitude", "longitude", "minimum_nights", "maximum_nights",
@@ -500,7 +477,6 @@ def prepare_batch_for_prediction(user_df, X_template, reference_df):
             "host_response_time", "geo_cluster",
         ]
 
-        # Numeric columns that need type conversion
         numeric_cols = [
             "price", "accommodates", "bedrooms", "beds", "bathrooms",
             "latitude", "longitude", "minimum_nights", "maximum_nights",
@@ -510,15 +486,13 @@ def prepare_batch_for_prediction(user_df, X_template, reference_df):
         for col in direct_cols:
             if col in row.index and pd.notna(row[col]):
                 val = row[col]
-                # Convert numeric columns to float
                 if col in numeric_cols:
                     try:
                         val = float(val)
                     except (ValueError, TypeError):
-                        val = pred_row[col]  # Keep default
+                        val = pred_row[col]
                 pred_row[col] = val
 
-        # Handle boolean conversions
         if "host_is_superhost" in row.index:
             val = row["host_is_superhost"]
             if isinstance(val, str):
@@ -533,7 +507,6 @@ def prepare_batch_for_prediction(user_df, X_template, reference_df):
             else:
                 pred_row["instant_bookable"] = int(val) if pd.notna(val) else 0
 
-        # Compute derived features (ensure numeric types)
         price = float(pred_row.get("price", 100) or 100)
         accommodates = max(float(pred_row.get("accommodates", 2) or 2), 1)
         bedrooms = float(pred_row.get("bedrooms", 1) or 1)
@@ -549,37 +522,30 @@ def prepare_batch_for_prediction(user_df, X_template, reference_df):
         pred_row["bathrooms_per_person"] = bathrooms / accommodates
         pred_row["min_stay_cost"] = price * minimum_nights
 
-        # Response time score
         host_response_time = pred_row.get("host_response_time", "")
         pred_row["response_time_score"] = RESPONSE_TIME_MAP.get(host_response_time, 0)
 
-        # Safety amenities count
         safety_cols = ["has_smoke_alarm", "has_first_aid"]
         pred_row["safety_amenities_count"] = sum(
             1 for col in safety_cols if pred_row.get(col, 0) == 1
         )
 
-        # Missing indicators (set to 0 for uploaded data)
         for col in ["price_missing", "beds_missing", "bedrooms_missing",
                     "bathrooms_missing", "host_response_rate_missing", "host_acceptance_rate_missing"]:
             pred_row[col] = 0
 
         rows.append(pred_row)
 
-    # Create DataFrame and ensure correct column order
     result = pd.DataFrame(rows)
     result = result[X_template.columns]
     return result
 
 
 def page_predict_single(df, model):
-    """Handle single listing interactive prediction."""
     st.markdown("Adjust the listing features below to predict its rating.")
 
-    # Get common property types for dropdown
     top_property_types = df["property_type"].value_counts().head(20).index.tolist()
 
-    # Input Form
     st.subheader("Listing Features")
 
     col1, col2 = st.columns(2)
@@ -621,19 +587,14 @@ def page_predict_single(df, model):
         st.markdown("**Location**")
         city = st.selectbox("City", ["LA", "NYC"])
 
-    # Build prediction row
     if st.button("Predict Rating", type="primary"):
-        # Prepare model data to get the exact column structure
         _, X_test, _, _ = prepare_model_data(df)
 
-        # Start with median values as template
         template = X_test.median(numeric_only=True).to_dict()
 
-        # Get mode for categorical columns
         for col in X_test.select_dtypes(include=["object"]).columns:
             template[col] = X_test[col].mode().iloc[0] if len(X_test[col].mode()) > 0 else ""
 
-        # Override with user inputs
         template["host_is_superhost"] = 1 if is_superhost == "Yes" else 0
         template["host_response_rate"] = host_response_rate
         template["host_experience_days"] = host_experience_days
@@ -653,9 +614,8 @@ def page_predict_single(df, model):
         template["has_hot_tub"] = 1 if has_hot_tub else 0
         template["has_gym"] = 1 if has_gym else 0
         template["property_type"] = property_type
-        template["geo_cluster"] = "20"  # Common cluster
+        template["geo_cluster"] = "20"
 
-        # Compute derived features
         safe_accommodates = max(accommodates, 1)
         template["price_per_person"] = price / safe_accommodates
         template["bedrooms_per_person"] = bedrooms / safe_accommodates
@@ -663,35 +623,28 @@ def page_predict_single(df, model):
         template["bathrooms_per_person"] = bathrooms / safe_accommodates
         template["min_stay_cost"] = price * minimum_nights
 
-        # Response time score
         template["response_time_score"] = RESPONSE_TIME_MAP.get(host_response_time, 0)
         template["host_response_time"] = host_response_time if host_response_time != "Unknown" else np.nan
 
-        # Location
         template["latitude"] = CITY_COORDS[city]["lat"]
         template["longitude"] = CITY_COORDS[city]["lon"]
 
-        # Safety amenities count
         safety_sum = sum([
             1 if has_smoke_alarm else 0,
             1 if has_first_aid else 0,
         ])
         template["safety_amenities_count"] = safety_sum
 
-        # Missing indicators (all 0 for user input)
         for col in ["price_missing", "beds_missing", "bedrooms_missing",
                     "bathrooms_missing", "host_response_rate_missing", "host_acceptance_rate_missing"]:
             if col in template:
                 template[col] = 0
 
-        # Create DataFrame with correct columns
         pred_row = pd.DataFrame([template])
-        pred_row = pred_row[X_test.columns]  # Ensure correct column order
+        pred_row = pred_row[X_test.columns]
 
-        # Predict
         prediction = model.predict(pred_row)[0]
 
-        # Display result
         st.markdown("---")
         st.subheader("Prediction Result")
 
@@ -708,7 +661,6 @@ def page_predict_single(df, model):
             )
 
         with col2:
-            # Rating category
             if prediction >= 4.8:
                 rating_cat = "Excellent"
                 color = "green"
@@ -724,7 +676,6 @@ def page_predict_single(df, model):
             st.markdown(f"**Category:** :{color}[{rating_cat}]")
 
         with col3:
-            # Visual gauge
             fig_gauge = go.Figure(go.Indicator(
                 mode="gauge+number",
                 value=prediction,
@@ -743,28 +694,25 @@ def page_predict_single(df, model):
             fig_gauge.update_layout(height=200, margin=dict(t=0, b=0, l=0, r=0))
             st.plotly_chart(fig_gauge, use_container_width=True)
 
-        # Top factors
         st.markdown("---")
         st.subheader("Key Factors Affecting Ratings")
         st.markdown("Based on feature importance, these factors matter most:")
 
         metrics_data = load_metrics()
-        top_features = list(metrics_data["feature_importance"].items())[:10]
+        if metrics_data is not None:
+            top_features = list(metrics_data["feature_importance"].items())[:10]
 
-        factors_df = pd.DataFrame(top_features, columns=["Feature", "Importance"])
-        factors_df["Feature"] = factors_df["Feature"].str.replace("num__", "").str.replace("target__", "")
+            factors_df = pd.DataFrame(top_features, columns=["Feature", "Importance"])
+            factors_df["Feature"] = factors_df["Feature"].str.replace("num__", "").str.replace("target__", "")
 
-        fig_factors = px.bar(
-            factors_df, x="Importance", y="Feature", orientation="h",
-            color="Importance", color_continuous_scale="Blues",
-        )
-        fig_factors.update_layout(height=350, showlegend=False)
-        st.plotly_chart(fig_factors, use_container_width=True)
+            fig_factors = px.bar(
+                factors_df, x="Importance", y="Feature", orientation="h",
+                color="Importance", color_continuous_scale="Blues",
+            )
+            fig_factors.update_layout(height=350, showlegend=False)
+            st.plotly_chart(fig_factors, use_container_width=True)
 
 
-# =============================================================================
-# MAIN
-# =============================================================================
 def main():
     st.set_page_config(
         page_title="Airbnb Rating Predictor",
