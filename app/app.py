@@ -75,7 +75,8 @@ def load_model():
         return None
     try:
         return joblib.load(MODEL_PATH)
-    except Exception:
+    except Exception as e:
+        st.error(f"Error loading model: {e}")
         return None
     
 @st.cache_data
