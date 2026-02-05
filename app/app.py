@@ -413,16 +413,21 @@ def page_predict_batch(model):
 
     st.markdown("""
     Upload a CSV file with listing data. The model will predict ratings for each row.
+    All columns are optional - missing values will use training data defaults.
 
-    **Required columns** (minimum):
+    **Recommended columns:**
     - `price`, `accommodates`, `bedrooms`, `beds`, `bathrooms`
-    - `host_is_superhost` (1/0 or True/False)
-    - `property_type`
+    - `host_is_superhost` (1/0 or True/False), `property_type`
+    - `latitude`, `longitude`
 
-    **Optional columns** (will use defaults if missing):
-    - `latitude`, `longitude`, `minimum_nights`, `maximum_nights`
-    - `host_response_rate`, `host_experience_days`, `instant_bookable`
-    - `amenities_count`, `has_wifi`, `has_heating`, etc.
+    **Other supported columns:**
+    - `minimum_nights`, `maximum_nights`, `instant_bookable`
+    - `host_response_rate`, `host_response_time`, `host_experience_days`
+    - `amenities_count`, `description_length`, `host_verifications_count`
+    - `has_wifi`, `has_heating`, `has_workspace`, `has_hot_water`
+    - `has_smoke_alarm`, `has_first_aid`, `has_hot_tub`, `has_gym`
+    - `luxury_count`, `warning_count`, `has_host_about`
+    - `geo_cluster`, `estimated_occupancy_l365d`
     """)
 
     uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
