@@ -675,7 +675,10 @@ def main():
         page_predict()
 
     st.sidebar.markdown("---")
-    st.sidebar.markdown("**Data:** Inside Airbnb (LA + NYC)")
+
+    # Show training data info only on relevant pages
+    if page in ["EDA Explorer", "Model Performance"]:
+        st.sidebar.markdown("**Training Data:** Inside Airbnb (LA + NYC)")
 
     # Load model info dynamically from metrics
     metrics_data = load_metrics()
