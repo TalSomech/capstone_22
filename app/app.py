@@ -12,6 +12,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_PATH = BASE_DIR / "data" / "processed" / "listings_combined_clean.csv"
 MODEL_PATH = BASE_DIR / "models" / "model.joblib"
 METRICS_PATH = BASE_DIR / "results" / "metrics.json"
+TEMPLATE_PATH = BASE_DIR / "models" / "feature_template.json"
 
 TARGET_COL = "review_scores_rating"
 
@@ -65,6 +66,16 @@ def load_model():
         return None
     try:
         return joblib.load(MODEL_PATH)
+    except Exception:
+        return None
+    
+@st.cache_data
+def load_feature_template():
+    if not TEMPLATE_PATH.exists():
+        return None
+    try:
+        with open(TEMPLATE_PATH, "r") as f:
+            return json.load(f)
     except Exception:
         return None
 
@@ -385,19 +396,24 @@ def page_predict_batch(df, model):
             st.markdown("**Preview of uploaded data:**")
             st.dataframe(user_df.head(10), use_container_width=True)
 
-            if df is None:
-                st.warning("Base data file not available. Cannot generate predictions without reference data for feature alignment.")
-                return
-
             if st.button("Generate Predictions", type="primary"):
                 if model is None:
                     st.error("Model file not available. Cannot generate predictions.")
-                elif df is None:
-                    st.warning("Base data file not available for feature alignment.")
                 else:
                     with st.spinner("Preparing data and generating predictions..."):
-                        _, X_template, _, _ = prepare_model_data(df)
-                        expected_cols = X_template.columns.tolist()
+                        if df is not None:
+                            _, X_template, _, _ = prepare_model_data(df)
+                        else:
+                            feat_template = load_feature_template()
+                            if feat_template is None:
+                                st.error("Neither data file nor feature template available.")
+                                st.stop()
+                            columns = feat_template["columns"]
+                            medians = feat_template["medians"]
+                            modes = feat_template["modes"]
+                            row = {col: medians.get(col, 0) for col in columns}
+                            row.update(modes)
+                            X_template = pd.DataFrame([row])[columns]
 
                         pred_df = prepare_batch_for_prediction(user_df, X_template, df)
 
@@ -406,62 +422,61 @@ def page_predict_batch(df, model):
                         result_df = user_df.copy()
                         result_df["predicted_rating"] = predictions
 
-                    def get_category(rating):
-                        if rating >= 4.8:
-                            return "Excellent"
-                        elif rating >= 4.5:
-                            return "Very Good"
-                        elif rating >= 4.0:
-                            return "Good"
-                        else:
-                            return "Below Average"
+                        def get_category(rating):
+                            if rating >= 4.8:
+                                return "Excellent"
+                            elif rating >= 4.5:
+                                return "Very Good"
+                            elif rating >= 4.0:
+                                return "Good"
+                            else:
+                                return "Below Average"
 
-                    result_df["rating_category"] = result_df["predicted_rating"].apply(get_category)
+                        result_df["rating_category"] = result_df["predicted_rating"].apply(get_category)
 
-                st.markdown("---")
-                st.subheader("Prediction Results")
+                    st.markdown("---")
+                    st.subheader("Prediction Results")
 
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Total Predictions", f"{len(predictions):,}")
-                with col2:
-                    st.metric("Average Predicted", f"{predictions.mean():.2f}")
-                with col3:
-                    st.metric("Min Predicted", f"{predictions.min():.2f}")
-                with col4:
-                    st.metric("Max Predicted", f"{predictions.max():.2f}")
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Total Predictions", f"{len(predictions):,}")
+                    with col2:
+                        st.metric("Average Predicted", f"{predictions.mean():.2f}")
+                    with col3:
+                        st.metric("Min Predicted", f"{predictions.min():.2f}")
+                    with col4:
+                        st.metric("Max Predicted", f"{predictions.max():.2f}")
 
-                fig_dist = px.histogram(
-                    result_df, x="predicted_rating", nbins=30,
-                    color_discrete_sequence=["steelblue"],
-                    labels={"predicted_rating": "Predicted Rating"},
-                )
-                fig_dist.update_layout(title="Distribution of Predicted Ratings")
-                st.plotly_chart(fig_dist, use_container_width=True)
+                    fig_dist = px.histogram(
+                        result_df, x="predicted_rating", nbins=30,
+                        color_discrete_sequence=["steelblue"],
+                        labels={"predicted_rating": "Predicted Rating"},
+                    )
+                    fig_dist.update_layout(title="Distribution of Predicted Ratings")
+                    st.plotly_chart(fig_dist, use_container_width=True)
 
-                st.markdown("**Results Table:**")
-                display_cols = ["predicted_rating", "rating_category"]
-                for col in ["price", "accommodates", "property_type", "host_is_superhost"]:
-                    if col in result_df.columns:
-                        display_cols.append(col)
-                display_cols = [c for c in display_cols if c in result_df.columns]
+                    st.markdown("**Results Table:**")
+                    display_cols = ["predicted_rating", "rating_category"]
+                    for col in ["price", "accommodates", "property_type", "host_is_superhost"]:
+                        if col in result_df.columns:
+                            display_cols.append(col)
+                    display_cols = [c for c in display_cols if c in result_df.columns]
 
-                st.dataframe(
-                    result_df[display_cols + [c for c in result_df.columns if c not in display_cols]].head(100),
-                    use_container_width=True,
-                )
+                    st.dataframe(
+                        result_df[display_cols + [c for c in result_df.columns if c not in display_cols]].head(100),
+                        use_container_width=True,
+                    )
 
-                csv_output = result_df.to_csv(index=False)
-                st.download_button(
-                    label="Download Results as CSV",
-                    data=csv_output,
-                    file_name="predictions.csv",
-                    mime="text/csv",
-                )
+                    csv_output = result_df.to_csv(index=False)
+                    st.download_button(
+                        label="Download Results as CSV",
+                        data=csv_output,
+                        file_name="predictions.csv",
+                        mime="text/csv",
+                    )
 
         except Exception as e:
             st.error(f"Error processing file: {str(e)}")
-
 
 def prepare_batch_for_prediction(user_df, X_template, reference_df):
     template = X_template.median(numeric_only=True).to_dict()
