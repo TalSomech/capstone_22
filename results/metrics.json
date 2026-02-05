@@ -1,0 +1,46 @@
+{
+  "metrics": {
+    "model_type": "gradient_boosting",
+    "n_rows": 58303,
+    "n_features_numeric": 34,
+    "n_features_categorical": 2,
+    "test_size": 0.2,
+    "random_state": 42,
+    "cv_folds": 5,
+    "cv_rmse_mean": 0.4081723589506582,
+    "cv_rmse_std": 0.013058689107078044,
+    "test_rmse": 0.42577795355994175,
+    "test_mae": 0.22764748665649714,
+    "test_r2": 0.13456962561448427,
+    "dummy_rmse": 0.45770785034256617,
+    "rmse_improvement_vs_dummy": 6.976043071738197,
+    "best_params": {
+      "model__n_estimators": 200,
+      "model__min_samples_split": 5,
+      "model__max_depth": 5,
+      "model__learning_rate": 0.05
+    }
+  },
+  "feature_importance": {
+    "num__log_host_listings_count": 0.15435637087461582,
+    "num__host_is_superhost": 0.1323926325020087,
+    "num__amenities_count": 0.12115236794442805,
+    "num__host_experience_days": 0.11348393850790225,
+    "num__price_per_person": 0.050132486517779754,
+    "num__longitude": 0.045696080065020864,
+    "num__latitude": 0.039773342022773786,
+    "num__description_length": 0.039250738639712394,
+    "num__min_stay_cost": 0.033095127786003334,
+    "num__price": 0.031164674249121945,
+    "target__0": 0.030867855795398615,
+    "num__host_response_rate": 0.028262174618923778,
+    "num__log_price": 0.024780472670203287,
+    "num__estimated_occupancy_l365d": 0.024354225241504976,
+    "num__instant_bookable": 0.01846377508855469,
+    "num__bathrooms_per_person": 0.016197277525349912,
+    "num__maximum_nights": 0.015582326619972517,
+    "num__beds_per_person": 0.013574282867494368,
+    "num__bedrooms_per_person": 0.009309791469696294,
+    "num__safety_amenities_count": 0.008074923630634178
+  }
+}
