@@ -7,6 +7,7 @@ geopy
 matplotlib
 seaborn
 category_encoders
+xgboost
 joblib
 wandb
 invoke
