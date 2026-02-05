@@ -550,6 +550,132 @@ def preprocess(file_inputs, drop_missing_target: bool = True):
     return df_gold, summary
 
 
+def load_feature_template(template_path: str = "models/feature_template.json") -> dict:
+    """Load feature template with expected columns, medians, and modes."""
+    with open(template_path, "r") as f:
+        return json.load(f)
+
+
+def preprocess_for_inference(
+    user_df: pd.DataFrame,
+    feature_template: dict,
+) -> pd.DataFrame:
+    """
+    Preprocess raw user data for model inference.
+
+    This function takes raw user input (e.g., from a CSV upload or form)
+    and transforms it to match the model's expected feature format.
+
+    Args:
+        user_df: Raw DataFrame from user (may have subset of columns)
+        feature_template: Dict with 'columns', 'medians', 'modes' from training
+
+    Returns:
+        DataFrame ready for model.predict() with correct columns and order
+    """
+    expected_columns = feature_template["columns"]
+    medians = feature_template["medians"]
+    modes = feature_template["modes"]
+
+    # Response time mapping
+    response_time_map = {
+        "within an hour": 1,
+        "within a few hours": 2,
+        "within a day": 3,
+        "a few days or more": 4,
+    }
+
+    # Build default row from medians and modes
+    default_row = {col: medians.get(col, 0) for col in expected_columns}
+    default_row.update(modes)
+
+    rows = []
+    for _, row in user_df.iterrows():
+        pred_row = default_row.copy()
+
+        # Direct column mappings (copy if present in user data)
+        direct_cols = [
+            "price", "accommodates", "bedrooms", "beds", "bathrooms",
+            "latitude", "longitude", "minimum_nights", "maximum_nights",
+            "host_response_rate", "host_experience_days", "instant_bookable",
+            "amenities_count", "host_is_superhost", "property_type",
+            "has_wifi", "has_heating", "has_workspace", "has_hot_water",
+            "has_smoke_alarm", "has_first_aid", "has_hot_tub", "has_gym",
+            "host_response_time", "geo_cluster", "description_length",
+            "luxury_count", "warning_count", "has_host_about",
+            "host_verifications_count", "estimated_occupancy_l365d",
+        ]
+
+        numeric_cols = [
+            "price", "accommodates", "bedrooms", "beds", "bathrooms",
+            "latitude", "longitude", "minimum_nights", "maximum_nights",
+            "host_response_rate", "host_experience_days", "amenities_count",
+            "description_length", "luxury_count", "warning_count",
+            "host_verifications_count", "estimated_occupancy_l365d",
+        ]
+
+        for col in direct_cols:
+            if col in row.index and pd.notna(row[col]):
+                val = row[col]
+                if col in numeric_cols:
+                    try:
+                        val = float(val)
+                    except (ValueError, TypeError):
+                        val = pred_row.get(col, 0)
+                pred_row[col] = val
+
+        # Handle boolean conversions
+        for bool_col in ["host_is_superhost", "instant_bookable"]:
+            if bool_col in row.index:
+                val = row[bool_col]
+                if isinstance(val, str):
+                    pred_row[bool_col] = 1 if val.lower() in ["true", "t", "yes", "1"] else 0
+                elif pd.notna(val):
+                    pred_row[bool_col] = int(val)
+
+        # Compute derived features
+        price = float(pred_row.get("price", 100) or 100)
+        accommodates = max(float(pred_row.get("accommodates", 2) or 2), 1)
+        bedrooms = float(pred_row.get("bedrooms", 1) or 1)
+        beds = float(pred_row.get("beds", 1) or 1)
+        bathrooms = float(pred_row.get("bathrooms", 1) or 1)
+        minimum_nights = float(pred_row.get("minimum_nights", 2) or 2)
+
+        # Log transforms
+        pred_row["log_price"] = np.log1p(price)
+        pred_row["log_minimum_nights"] = np.log1p(minimum_nights)
+
+        # Ratio features
+        pred_row["price_per_person"] = price / accommodates
+        pred_row["bedrooms_per_person"] = bedrooms / accommodates
+        pred_row["beds_per_person"] = beds / accommodates
+        pred_row["bathrooms_per_person"] = bathrooms / accommodates
+        pred_row["min_stay_cost"] = price * minimum_nights
+
+        # Response time score
+        host_response_time = pred_row.get("host_response_time", "")
+        pred_row["response_time_score"] = response_time_map.get(host_response_time, 5)
+
+        # Safety amenities count
+        safety_cols = ["has_smoke_alarm", "has_first_aid"]
+        pred_row["safety_amenities_count"] = sum(
+            1 for col in safety_cols if pred_row.get(col, 0) == 1
+        )
+
+        # Missing indicators (set to 0 for user-provided data)
+        for col in ["price_missing", "beds_missing", "bedrooms_missing",
+                    "bathrooms_missing", "host_response_rate_missing",
+                    "host_acceptance_rate_missing"]:
+            pred_row[col] = 0
+
+        rows.append(pred_row)
+
+    # Create DataFrame with correct column order
+    result = pd.DataFrame(rows)
+    result = result[expected_columns]
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="AirBnB preprocessing for one or multiple files: feature engineering, cleaning, and merging"
