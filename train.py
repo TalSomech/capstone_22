@@ -1,23 +1,41 @@
 # train.py
 import argparse
 import json
+import os
 from pathlib import Path
 
 import pandas as pd
 import numpy as np
 
-from sklearn.model_selection import train_test_split, cross_val_score, RandomizedSearchCV
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.neural_network import MLPRegressor
 from sklearn.pipeline import Pipeline
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.impute import SimpleImputer
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.linear_model import Ridge
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from category_encoders import TargetEncoder
 
+
+
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.linear_model import Ridge, ElasticNet
+from sklearn.ensemble import (
+    RandomForestRegressor,
+    GradientBoostingRegressor,
+    AdaBoostRegressor,
+    HistGradientBoostingRegressor,
+    ExtraTreesRegressor
+)
 import joblib
 import wandb
+import optuna
+from optuna.integration import OptunaSearchCV
+from optuna.distributions import IntDistribution, FloatDistribution, CategoricalDistribution
+
+from utils import build_preprocessor, _ensure_parent_dir
+
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not installed, will use system environment variables
 
 # -----------------------------
 # Default paths
@@ -28,138 +46,96 @@ DEFAULT_METRICS_PATH = "results/metrics.json"
 
 TARGET_COL = "review_scores_rating"
 
-# Columns to use for target encoding (high cardinality categoricals)
-TARGET_ENCODE_COLS = ["neighbourhood_cleansed", "property_type"]
 
-# Columns to exclude from features
-# See md_files/FEATURE_EXCLUSIONS.md for detailed reasoning
-COLS_TO_EXCLUDE = [
-    "city",                  # Generalization - model should work on any city
-    "host_id",               # High cardinality identifier - causes overfitting
-    "room_type",             # Redundant with is_entire_home, is_private_room binary flags
-    # Note: neighbourhood_cleansed and property_type are NOW handled by TargetEncoder in pipeline
-
-    # Availability Bloat - 8 variables for "minimum nights" is extreme collinearity
-    "minimum_minimum_nights", "maximum_minimum_nights",
-    "minimum_maximum_nights", "maximum_maximum_nights",
-    "minimum_nights_avg_ntm", "maximum_nights_avg_ntm",
-    "availability_30", "availability_60", "availability_90",  # Subsets of availability_365
-
-    # Review Redundancy - correlate heavily with reviews_per_month
-    "number_of_reviews_ltm", "number_of_reviews_l30d",
-
-    # Host Count Redundancy - breakdown of host_listings_count
-    "calculated_host_listings_count_entire_homes",
-    "calculated_host_listings_count_private_rooms",
-    "calculated_host_listings_count_shared_rooms",
-    "host_total_listings_count",  # Duplicate of host_listings_count
-
-    # Low Variance - nearly always 1 (True), no splitting power
-    "host_has_profile_pic",
-
-    # Negative Permutation Importance - adding noise, not signal
-    # See results/diagnostics/permutation_importance.csv
-    "has_washer", "description_word_count", "has_kitchen", "is_entire_home",
-    "has_dryer", "has_self_checkin", "has_pets_allowed", "has_free_parking",
-    "is_private_room", "has_neighborhood_overview", "has_carbon_alarm",
-    "host_about_length", "has_tv", "bedrooms", "host_acceptance_rate",
-    "bathrooms", "has_fire_extinguisher", "name_length", "has_pool",
-    "accommodates", "has_ac", "beds",
-
-    # Replaced by log transforms (avoid collinearity with log_ versions)
-    "number_of_reviews",  # Use log_number_of_reviews instead
-    "host_listings_count",  # Use log_host_listings_count instead (dropped in preprocess)
-]
-
-
-def _ensure_parent_dir(path: str) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-
-
-def build_preprocessor(
-    numeric_cols: list,
-    categorical_cols: list,
-    target_encode_cols: list = None,
-) -> ColumnTransformer:
-    """
-    Build sklearn preprocessing pipeline with Target Encoding for high-cardinality features.
-
-    Args:
-        numeric_cols: List of numeric feature columns
-        categorical_cols: List of categorical columns for one-hot encoding
-        target_encode_cols: List of columns for target encoding (e.g., neighbourhood)
-    """
-    target_encode_cols = target_encode_cols or []
-
-    # Separate categorical columns: target-encoded vs one-hot encoded
-    onehot_cols = [c for c in categorical_cols if c not in target_encode_cols]
-
-    # --- Transformers ---
-
-    # Numeric: Fill missing values, then scale
-    numeric_transformer = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="median")),
-        ("scaler", StandardScaler()),
-    ])
-
-    # Target Encoding: Best for high-cardinality features like Neighborhoods
-    # smoothing=10.0 prevents overfitting on small neighborhoods
-    target_transformer = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("encoder", TargetEncoder(smoothing=10.0)),
-    ])
-
-    # One-Hot Encoding: Best for low-cardinality features
-    onehot_transformer = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
-    ])
-
-    # --- Assemble ---
-    transformers = [
-        ("num", numeric_transformer, numeric_cols),
-    ]
-
-    # Only add target transformer if there are columns to encode
-    if target_encode_cols:
-        transformers.append(("target", target_transformer, target_encode_cols))
-
-    # Only add onehot transformer if there are columns to encode
-    if onehot_cols:
-        transformers.append(("cat", onehot_transformer, onehot_cols))
-
-    preprocessor = ColumnTransformer(
-        transformers=transformers,
-        remainder="drop",
-    )
-    return preprocessor
+def convert_mlp_architecture(architecture_str):
+    """Convert string representation to tuple for MLPRegressor hidden_layer_sizes."""
+    if isinstance(architecture_str, str):
+        return tuple(int(x) for x in architecture_str.split(","))
+    return architecture_str
 
 
 def get_model_configs(random_state: int) -> dict:
-    """Return model configurations with hyperparameter search spaces."""
+    """Return model configurations with Optuna hyperparameter distributions."""
     return {
         "ridge": {
             "model": Ridge(random_state=random_state),
             "params": {
-                "model__alpha": [0.01, 0.1, 1.0, 10.0, 100.0],
+                "model__alpha": FloatDistribution(0.001, 100.0, log=True),
+            },
+        },
+        "elasticnet": {
+            "model": ElasticNet(random_state=random_state, max_iter=2000),
+            "params": {
+                "model__alpha": FloatDistribution(0.0001, 10.0, log=True),
+                "model__l1_ratio": FloatDistribution(0.0, 1.0),
             },
         },
         "random_forest": {
             "model": RandomForestRegressor(random_state=random_state, n_jobs=-1),
             "params": {
-                "model__n_estimators": [100, 200, 300],
-                "model__max_depth": [10, 20, 30, None],
-                "model__min_samples_split": [2, 5, 10],
-                "model__min_samples_leaf": [1, 2, 4],
+                "model__n_estimators": IntDistribution(100, 500),
+                "model__max_depth": IntDistribution(5, 50),
+                "model__min_samples_split": IntDistribution(2, 20),
+                "model__min_samples_leaf": IntDistribution(1, 10),
+                "model__max_features": FloatDistribution(0.3, 1.0),
+            },
+        },
+        "extra_trees": {
+            "model": ExtraTreesRegressor(random_state=random_state, n_jobs=-1),
+            "params": {
+                "model__n_estimators": IntDistribution(100, 500),
+                "model__max_depth": IntDistribution(5, 50),
+                "model__min_samples_split": IntDistribution(2, 20),
+                "model__min_samples_leaf": IntDistribution(1, 10),
+                "model__max_features": FloatDistribution(0.3, 1.0),
             },
         },
         "gradient_boosting": {
             "model": GradientBoostingRegressor(random_state=random_state),
             "params": {
-                "model__n_estimators": [100, 200, 300],
-                "model__max_depth": [3, 5, 7],
-                "model__learning_rate": [0.01, 0.05, 0.1],
-                "model__min_samples_split": [2, 5, 10],
+                "model__n_estimators": IntDistribution(100, 500),
+                "model__max_depth": IntDistribution(3, 10),
+                "model__learning_rate": FloatDistribution(0.001, 0.3, log=True),
+                "model__min_samples_split": IntDistribution(2, 20),
+                "model__subsample": FloatDistribution(0.6, 1.0),
+            },
+        },
+        "hist_gradient_boosting": {
+            "model": HistGradientBoostingRegressor(random_state=random_state),
+            "params": {
+                "model__max_iter": IntDistribution(100, 500),
+                "model__max_depth": IntDistribution(3, 15),
+                "model__learning_rate": FloatDistribution(0.001, 0.3, log=True),
+                "model__l2_regularization": FloatDistribution(0.0, 10.0),
+                "model__max_bins": IntDistribution(128, 255),
+            },
+        },
+        "adaboost": {
+            "model": AdaBoostRegressor(random_state=random_state),
+            "params": {
+                "model__n_estimators": IntDistribution(50, 300),
+                "model__learning_rate": FloatDistribution(0.001, 2.0, log=True),
+            },
+        },
+        "mlp": {
+            "model": MLPRegressor(random_state=random_state, max_iter=100, early_stopping=True),
+            "params": {
+                "model__hidden_layer_sizes": CategoricalDistribution([
+                    (50,), (100,), (150,),
+                    (100, 50), (150, 75),
+                    (100, 50, 25), (150, 100, 50),
+                ]),
+                # # OptunaSearchCV handles hidden_layer_sizes differently
+                # # We'll use string representations that get converted
+                # "model__hidden_layer_sizes": CategoricalDistribution([
+                #     "50", "100", "150",              # Single layer architectures
+                #     "100,50", "150,75",              # Two layer architectures
+                #     "100,50,25", "150,100,50"        # Three layer architectures
+                # ]),
+                "model__activation": CategoricalDistribution(["relu", "tanh"]),
+                "model__alpha": FloatDistribution(0.00001, 0.1, log=True),
+                "model__learning_rate_init": FloatDistribution(0.0001, 0.01, log=True),
+                "model__batch_size": IntDistribution(32, 256),
             },
         },
     }
@@ -173,6 +149,7 @@ def train_model(
     cv_folds: int = 5,
     n_iter_search: int = 20,
     tune_hyperparams: bool = True,
+    use_wandb: bool = False,
 ):
     """
     Train a regression model with cross-validation and optional hyperparameter tuning.
@@ -190,8 +167,8 @@ def train_model(
         (pipeline, metrics_dict, feature_importance_dict)
     """
     # Prepare features and target
-    exclude_cols = [c for c in COLS_TO_EXCLUDE if c in df.columns]
-    X = df.drop(columns=[TARGET_COL] + exclude_cols)
+    # exclude_cols = [c for c in COLS_TO_EXCLUDE if c in df.columns]
+    X = df.drop(columns=[TARGET_COL])
     y = df[TARGET_COL]
 
     # Split data FIRST (before target encoding to avoid leakage)
@@ -209,6 +186,7 @@ def train_model(
     categorical_cols = [c for c in X_train.columns if c not in numeric_cols]
 
     # Identify which categorical columns should use target encoding (high cardinality)
+    from preprocess import TARGET_ENCODE_COLS
     target_encode_cols = [c for c in TARGET_ENCODE_COLS if c in categorical_cols]
     onehot_cols = [c for c in categorical_cols if c not in target_encode_cols]
 
@@ -221,6 +199,7 @@ def train_model(
 
     # Build preprocessor with target encoding integrated
     preprocessor = build_preprocessor(numeric_cols, categorical_cols, target_encode_cols)
+    # x_train=preprocessor.fit_transform(X_train)
 
     # Get model config
     model_configs = get_model_configs(random_state)
@@ -237,21 +216,65 @@ def train_model(
 
     # Hyperparameter tuning (optional)
     if tune_hyperparams and model_config["params"]:
-        print(f"\nTuning hyperparameters ({n_iter_search} iterations, {cv_folds}-fold CV)...")
-        search = RandomizedSearchCV(
-            pipeline,
-            model_config["params"],
-            n_iter=n_iter_search,
+        print(f"\nTuning hyperparameters with Optuna ({n_iter_search} trials, {cv_folds}-fold CV)...")
+
+        # Create Optuna study with optional wandb integration
+        study = optuna.create_study(
+            direction="maximize",
+            study_name=f"{model_type}_optimization",
+            sampler=optuna.samplers.TPESampler(seed=random_state),
+        )
+
+        # # Add wandb callback if enabled
+        callbacks = []
+        # if use_wandb:
+        #     try:
+        #         from optuna.integration.wandb import WeightsAndBiasesCallback
+        #         wandb_callback = WeightsAndBiasesCallback(
+        #             metric_name="cv_rmse",
+        #             wandb_kwargs={"project": "airbnb-capstone"}
+        #
+        #         )
+        #         callbacks.append(wandb_callback)
+        #         print("✓ Wandb callback enabled for Optuna trials")
+        #     except ImportError:
+        #         print("⚠ Wandb callback not available (optuna[wandb] not installed)")
+
+        search = OptunaSearchCV(
+            estimator=pipeline,
+            param_distributions=model_config["params"],
+            n_trials=n_iter_search,
             cv=cv_folds,
             scoring="neg_root_mean_squared_error",
             random_state=random_state,
             n_jobs=-1,
-            verbose=1,
+            verbose=3,
+            study=study,
+            callbacks=callbacks if callbacks else None,
         )
         search.fit(X_train, y_train)
         pipeline = search.best_estimator_
         best_params = search.best_params_
+        best_score = -search.best_score_  # Convert back to positive RMSE
+
+        # Convert MLP hidden_layer_sizes from string to tuple if needed
+        if model_type == "mlp" and "model__hidden_layer_sizes" in best_params:
+            arch_str = best_params["model__hidden_layer_sizes"]
+            arch_tuple = convert_mlp_architecture(arch_str)
+            best_params["model__hidden_layer_sizes"] = arch_tuple
+            # Update the model in the pipeline
+            pipeline.named_steps["model"].hidden_layer_sizes = arch_tuple
+
         print(f"Best params: {best_params}")
+        print(f"Best CV RMSE: {best_score:.4f}")
+
+        # Log optimization history to wandb
+        if use_wandb:
+            trials_df = study.trials_dataframe()
+            wandb.log({
+                "optuna_best_value": study.best_value,
+                "optuna_n_trials": len(study.trials),
+            })
     else:
         pipeline.fit(X_train, y_train)
         best_params = {}
@@ -320,14 +343,23 @@ def main():
     parser.add_argument("--in-csv", default=DEFAULT_INPUT_CSV, help="Input CSV (processed)")
     parser.add_argument(
         "--model-type",
-        choices=["ridge", "random_forest", "gradient_boosting"],
+        choices=[
+            "ridge",
+            "elasticnet",
+            "random_forest",
+            "extra_trees",
+            "gradient_boosting",
+            "hist_gradient_boosting",
+            "adaboost",
+            "mlp"
+        ],
         default="random_forest",
         help="Model type (default: random_forest)",
     )
     parser.add_argument("--test-size", type=float, default=0.2, help="Test size fraction (default: 0.2)")
     parser.add_argument("--random-state", type=int, default=42, help="Random state (default: 42)")
     parser.add_argument("--cv-folds", type=int, default=5, help="Number of CV folds (default: 5)")
-    parser.add_argument("--n-iter", type=int, default=20, help="Number of RandomizedSearchCV iterations (default: 20)")
+    parser.add_argument("--n-iter", type=int, default=20, help="Number of Optuna trials (default: 20)")
     parser.add_argument("--no-tune", action="store_true", help="Skip hyperparameter tuning")
     parser.add_argument("--out-model", default=DEFAULT_MODEL_PATH, help="Path to save trained model")
     parser.add_argument("--out-metrics", default=DEFAULT_METRICS_PATH, help="Path to save metrics JSON")
@@ -337,8 +369,17 @@ def main():
     # Initialize wandb if enabled
     use_wandb = args.wandb
     if use_wandb:
+        # Login to WandB using API key from environment
+        wandb_api_key = os.getenv("WANDB_API_KEY")
+        if wandb_api_key:
+            wandb.login(key=wandb_api_key)
+            print("✓ Logged in to WandB successfully")
+        else:
+            print("⚠ Warning: WANDB_API_KEY not found in environment. Attempting anonymous mode...")
+
         wandb.init(
             project="airbnb-capstone",
+            entity="tawfeeksami-22",
             config={
                 "model_type": args.model_type,
                 "test_size": args.test_size,
@@ -368,6 +409,7 @@ def main():
         cv_folds=args.cv_folds,
         n_iter_search=args.n_iter,
         tune_hyperparams=not args.no_tune,
+        use_wandb=use_wandb,
     )
 
     # Save model

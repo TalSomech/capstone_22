@@ -6,14 +6,11 @@ from pathlib import Path
 import pandas as pd
 import joblib
 
+from utils import _ensure_parent_dir
 
 DEFAULT_MODEL_PATH = "models/model.joblib"
 DEFAULT_INPUT_CSV = "data/processed/listings_combined_clean.csv"
 DEFAULT_OUTPUT_CSV = "results/predictions.csv"
-
-
-def _ensure_parent_dir(path: str) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
 
 
 def predict(

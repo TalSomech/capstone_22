@@ -10,5 +10,7 @@ category_encoders
 xgboost
 joblib
 wandb
+invoke
+optuna-integration
+python-dotenv
 streamlit
-plotly

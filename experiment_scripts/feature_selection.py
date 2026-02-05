@@ -25,6 +25,8 @@ from sklearn.ensemble import RandomForestRegressor
 
 import joblib
 
+from utils import _ensure_parent_dir
+
 # -----------------------------
 # Default paths
 # -----------------------------
@@ -34,9 +36,6 @@ DEFAULT_RESULTS_PATH = "results/feature_selection_results.json"
 TARGET_COL = "review_scores_rating"
 COLS_TO_EXCLUDE = ["city"]
 
-
-def _ensure_parent_dir(path: str) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
 
 
 def build_preprocessor(numeric_cols: list, categorical_cols: list) -> ColumnTransformer:
@@ -328,6 +327,8 @@ def main():
 
     # Step 5: Save results
     _ensure_parent_dir(args.out_results)
+
+
 
     results = {
         "summary": {

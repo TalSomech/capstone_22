@@ -24,6 +24,8 @@ from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 
 import joblib
 
+from utils import _ensure_parent_dir
+
 # -----------------------------
 # Default paths
 # -----------------------------
@@ -37,9 +39,6 @@ EXCELLENT_THRESHOLD = 4.8  # Ratings >= this are "excellent"
 # Columns to exclude from features
 COLS_TO_EXCLUDE = ["city"]
 
-
-def _ensure_parent_dir(path: str) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
 
 
 def build_preprocessor(numeric_cols: list, categorical_cols: list) -> ColumnTransformer:
