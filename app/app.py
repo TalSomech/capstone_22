@@ -676,8 +676,18 @@ def main():
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("**Data:** Inside Airbnb (LA + NYC)")
-    st.sidebar.markdown("**Model:** XGBoost Regression")
-    st.sidebar.markdown("**Features:** 37 (lean set)")
+
+    # Load model info dynamically from metrics
+    metrics_data = load_metrics()
+    if metrics_data:
+        metrics = metrics_data["metrics"]
+        model_type = metrics.get("model_type", "Unknown").replace("_", " ").title()
+        n_features = metrics.get("n_features_numeric", 0) + metrics.get("n_features_categorical", 0)
+        st.sidebar.markdown(f"**Model:** {model_type}")
+        st.sidebar.markdown(f"**Features:** {n_features}")
+    else:
+        st.sidebar.markdown("**Model:** Not loaded")
+        st.sidebar.markdown("**Features:** N/A")
 
 
 if __name__ == "__main__":
