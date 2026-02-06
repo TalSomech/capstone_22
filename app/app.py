@@ -491,10 +491,21 @@ def page_predict_batch(model):
                     use_container_width=True,
                 )
 
-                csv_output = result_df.to_csv(index=False)
+                # Download with all columns (for user reference)
+                csv_full = result_df.to_csv(index=False)
                 st.download_button(
-                    label="Download Results as CSV",
-                    data=csv_output,
+                    label="Download Full Results",
+                    data=csv_full,
+                    file_name="predictions_full.csv",
+                    mime="text/csv",
+                )
+
+                # Download predictions only (single column, for evaluation)
+                predictions_only = pd.DataFrame({"prediction": predictions.values})
+                csv_predictions = predictions_only.to_csv(index=False)
+                st.download_button(
+                    label="Download Predictions Only",
+                    data=csv_predictions,
                     file_name="predictions.csv",
                     mime="text/csv",
                 )
