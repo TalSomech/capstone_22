@@ -604,6 +604,9 @@ def preprocess_for_inference(
             "host_response_time", "geo_cluster", "description_length",
             "luxury_count", "warning_count", "has_host_about",
             "host_verifications_count", "estimated_occupancy_l365d",
+            # GenAI features (optional - user provides via API key)
+            "sentiment_score", "professionalism_score", "cleanliness_emphasis",
+            "hospitality_score", "accuracy_risk",
         ]
 
         numeric_cols = [
@@ -612,6 +615,9 @@ def preprocess_for_inference(
             "host_response_rate", "host_experience_days", "amenities_count",
             "description_length", "luxury_count", "warning_count",
             "host_verifications_count", "estimated_occupancy_l365d",
+            # GenAI features
+            "sentiment_score", "professionalism_score", "cleanliness_emphasis",
+            "hospitality_score", "accuracy_risk",
         ]
 
         for col in direct_cols:

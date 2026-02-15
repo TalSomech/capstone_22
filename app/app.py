@@ -15,6 +15,7 @@ from sklearn.model_selection import train_test_split
 # Import from shared modules
 from predict import load_model as _load_model, predict_raw
 from preprocess import load_feature_template as _load_feature_template
+from genai_features import extract_single_listing_features, get_default_features
 
 # =============================================================================
 # Paths
@@ -411,6 +412,10 @@ def page_predict_batch(model):
     """Batch prediction from CSV upload - uses shared preprocess module."""
     st.subheader("Upload CSV for Batch Predictions")
 
+    # Check if GenAI is enabled
+    api_key = st.session_state.get("genai_api_key", "")
+    api_provider = st.session_state.get("genai_api_provider", "openai")
+
     st.markdown("""
     Upload a CSV file with listing data. The model will predict ratings for each row.
     All columns are optional - missing values will use training data defaults.
@@ -428,7 +433,15 @@ def page_predict_batch(model):
     - `has_smoke_alarm`, `has_first_aid`, `has_hot_tub`, `has_gym`
     - `luxury_count`, `warning_count`, `has_host_about`
     - `geo_cluster`, `estimated_occupancy_l365d`
+
+    **GenAI columns** (if API key provided in sidebar):
+    - `name`, `description`, `host_about` - text will be analyzed for sentiment and quality
     """)
+
+    if api_key:
+        st.success(f"GenAI enabled - text columns will be analyzed (~$0.0001 per row)")
+    else:
+        st.info("Add your API key in the sidebar to enable GenAI text analysis")
 
     uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
 
@@ -440,6 +453,18 @@ def page_predict_batch(model):
             st.markdown("**Preview of uploaded data:**")
             st.dataframe(user_df.head(10), use_container_width=True)
 
+            # Option to enable/disable GenAI for batch (can be expensive)
+            use_genai_batch = False
+            if api_key:
+                has_text_cols = any(col in user_df.columns for col in ["name", "description", "host_about"])
+                if has_text_cols:
+                    estimated_cost = len(user_df) * 0.0001
+                    use_genai_batch = st.checkbox(
+                        f"Extract GenAI features from text (~${estimated_cost:.2f} for {len(user_df)} rows)",
+                        value=False,
+                        help="Analyze text columns using AI to extract sentiment, professionalism, etc."
+                    )
+
             if st.button("Generate Predictions", type="primary"):
                 if model is None:
                     st.error("Model file not available. Cannot generate predictions.")
@@ -449,6 +474,38 @@ def page_predict_batch(model):
                 if feature_template is None:
                     st.error("Feature template not available. Cannot generate predictions.")
                     return
+
+                # Extract GenAI features for batch if enabled
+                if use_genai_batch and api_key:
+                    with st.spinner(f"Extracting GenAI features for {len(user_df)} rows..."):
+                        genai_results = []
+                        progress_bar = st.progress(0)
+
+                        for idx, row in user_df.iterrows():
+                            name = str(row.get("name", "")) if pd.notna(row.get("name")) else ""
+                            description = str(row.get("description", "")) if pd.notna(row.get("description")) else ""
+                            host_about_text = str(row.get("host_about", "")) if pd.notna(row.get("host_about")) else ""
+
+                            try:
+                                features = extract_single_listing_features(
+                                    name=name,
+                                    description=description,
+                                    host_about=host_about_text,
+                                    api_key=api_key,
+                                    api=api_provider
+                                )
+                            except Exception:
+                                features = get_default_features()
+
+                            genai_results.append(features)
+                            progress_bar.progress((idx + 1) / len(user_df))
+
+                        # Add GenAI features to user_df
+                        for feat in ["sentiment_score", "professionalism_score", "cleanliness_emphasis",
+                                     "hospitality_score", "accuracy_risk"]:
+                            user_df[feat] = [r.get(feat, get_default_features()[feat]) for r in genai_results]
+
+                        st.success(f"GenAI features extracted for {len(user_df)} rows!")
 
                 with st.spinner("Preparing data and generating predictions..."):
                     # Use shared predict_raw function from predict.py
@@ -520,6 +577,10 @@ def page_predict_single(df, model):
 
     top_property_types = df["property_type"].value_counts().head(20).index.tolist()
 
+    # Check if GenAI is enabled
+    api_key = st.session_state.get("genai_api_key", "")
+    api_provider = st.session_state.get("genai_api_provider", "openai")
+
     st.subheader("Listing Features")
 
     col1, col2 = st.columns(2)
@@ -561,11 +622,57 @@ def page_predict_single(df, model):
         st.markdown("**Location**")
         city = st.selectbox("City", ["LA", "NYC"])
 
+    # GenAI text inputs section
+    st.markdown("---")
+    st.subheader("Listing Text (for GenAI Features)")
+
+    if api_key:
+        st.success(f"GenAI enabled with {api_provider.upper()} - text will be analyzed for sentiment and quality features")
+    else:
+        st.info("Add your API key in the sidebar to enable GenAI text analysis")
+
+    listing_name = st.text_input(
+        "Listing Name/Title",
+        placeholder="e.g., Cozy Beach House with Ocean View",
+        help="The title of your listing"
+    )
+
+    listing_description = st.text_area(
+        "Listing Description",
+        placeholder="Describe your space, what makes it special, nearby attractions...",
+        height=150,
+        help="The main description of your listing"
+    )
+
+    host_about = st.text_area(
+        "About the Host",
+        placeholder="Tell guests about yourself as a host...",
+        height=100,
+        help="Your host bio/description"
+    )
+
     if st.button("Predict Rating", type="primary"):
         feature_template = load_feature_template()
         if feature_template is None:
             st.error("Feature template not available. Cannot generate predictions.")
             return
+
+        # Extract GenAI features if API key is provided
+        genai_features = get_default_features()
+        if api_key and (listing_name or listing_description or host_about):
+            with st.spinner("Extracting GenAI features from text..."):
+                try:
+                    genai_features = extract_single_listing_features(
+                        name=listing_name,
+                        description=listing_description,
+                        host_about=host_about,
+                        api_key=api_key,
+                        api=api_provider
+                    )
+                    st.success("GenAI features extracted successfully!")
+                except Exception as e:
+                    st.warning(f"GenAI extraction failed: {e}. Using default values.")
+                    genai_features = get_default_features()
 
         # Build single-row DataFrame from form inputs
         single_listing = pd.DataFrame([{
@@ -593,6 +700,12 @@ def page_predict_single(df, model):
             "has_gym": 1 if has_gym else 0,
             "latitude": CITY_COORDS[city]["lat"],
             "longitude": CITY_COORDS[city]["lon"],
+            # GenAI features
+            "sentiment_score": genai_features.get("sentiment_score", 0.0),
+            "professionalism_score": genai_features.get("professionalism_score", 3),
+            "cleanliness_emphasis": genai_features.get("cleanliness_emphasis", 0),
+            "hospitality_score": genai_features.get("hospitality_score", 3),
+            "accuracy_risk": genai_features.get("accuracy_risk", 3),
         }])
 
         # Use shared predict_raw function
@@ -682,6 +795,41 @@ def main():
         "Navigate",
         ["EDA Explorer", "Model Performance", "Predict a Rating"],
     )
+
+    # GenAI API Key section (only show on Predict page)
+    if page == "Predict a Rating":
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### GenAI Features (Optional)")
+        st.sidebar.markdown("Provide your API key to extract AI-based features from listing text.")
+
+        api_provider = st.sidebar.selectbox(
+            "API Provider",
+            ["OpenAI", "Anthropic", "Nebius"],
+            key="api_provider"
+        )
+
+        # Cost info based on provider
+        cost_info = {
+            "OpenAI": "~$0.0001 per prediction",
+            "Anthropic": "~$0.0001 per prediction",
+            "Nebius": "~$0.00002 per prediction (cheapest)",
+        }
+
+        api_key = st.sidebar.text_input(
+            f"{api_provider} API Key",
+            type="password",
+            key="api_key",
+            help=f"Your API key is never stored. Cost: {cost_info.get(api_provider, '~$0.0001')}"
+        )
+
+        # Store in session state for access in predict pages
+        st.session_state["genai_api_key"] = api_key
+        st.session_state["genai_api_provider"] = api_provider.lower()
+
+        if api_key:
+            st.sidebar.success("API key provided - GenAI features enabled")
+        else:
+            st.sidebar.info("No API key - using default feature values")
 
     if page == "EDA Explorer":
         page_eda()

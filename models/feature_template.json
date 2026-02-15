@@ -42,7 +42,12 @@
     "geo_cluster",
     "log_host_listings_count",
     "log_price",
-    "log_minimum_nights"
+    "log_minimum_nights",
+    "sentiment_score",
+    "professionalism_score",
+    "cleanliness_emphasis",
+    "hospitality_score",
+    "accuracy_risk"
   ],
   "medians": {
     "host_response_rate": 100.0,
@@ -85,7 +90,12 @@
     "geo_cluster": 24.0,
     "log_host_listings_count": 1.0986122886681098,
     "log_price": 4.672828834461906,
-    "log_minimum_nights": 3.4339872044851463
+    "log_minimum_nights": 3.4339872044851463,
+    "sentiment_score": 0.0,
+    "professionalism_score": 3.0,
+    "cleanliness_emphasis": 0.0,
+    "hospitality_score": 3.0,
+    "accuracy_risk": 3.0
   },
   "modes": {
     "host_response_time": "within an hour",
