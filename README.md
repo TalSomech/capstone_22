@@ -4,6 +4,7 @@ This repository contains a **complete, end-to-end machine learning pipeline** fo
 The project is designed to reflect **production-grade ML practices**, where each stage of the pipeline is clearly separated, reproducible, and driven by explicit artifacts.
 
 The pipeline starts from raw CSV files and ends with model predictions and summarized results.
+**Business Goal**: The machine learning model is specifically designed to predict the **ratings** of an Airbnb listing based on its features.
 
 ---
 
@@ -49,3 +50,39 @@ Each step is implemented as a **standalone Python script** that can be run indep
 ├── results.py                       # Prediction aggregation script
 ├── requirements.txt
 └── README.md
+```
+
+---
+
+## Installation & Setup
+
+1. **Clone the repository:**
+
+   ```bash
+   git clone https://github.com/TalSomech/capstone_22.git
+   cd capstone_22
+   ```
+
+2. **Install requirements:**
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+## Usage Instructions
+
+To execute the pipeline from start to finish, run the scripts in the following order:
+
+```bash
+# 1. Clean and merge the raw data
+python preprocess.py
+
+# 2. Train the model and save the artifact
+python train.py
+
+# 3. Generate predictions using the saved model
+python predict.py
+
+# 4. Aggregate results and output summaries
+python results.py
+```
